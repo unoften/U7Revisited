@@ -26,18 +26,17 @@ Welcome to Ultima VII: Revisited, an attempt to write a replacement engine for U
 **Please Note:** The project is transitioning to a new, cross-platform build and task management system implemented in Go (`u7go/`). The familiar `u7` (Linux/macOS) and `u7.bat` (Windows) scripts in the project root now act as **wrappers** for this new system.
 
 *   **Goal:** Replace the separate, older `scripts/*.sh` and `scripts/*.bat` files with a single, consistent Go program.
-*   **Current Status:** This system is under active development. While the basic build/run/clean commands should work via the wrappers, some features may be incomplete or behave differently than the old scripts.
+*   **Current Status:** This system is under active development.
+    *   The `feature/go-wrapper` branch implements the new wrapper scripts (`u7` and `u7.bat`) and the underlying `u7go` application.
+    *   The basic build/run/clean functionality via the wrappers is generally operational on both Linux and Windows.
+    *   However, further work is required before this is considered stable:
+        *   The logic within `u7go` for configuring the project and generating the underlying build system files (e.g., interacting with Meson) needs significant refinement, planning, and testing.
+        *   Broader testing across different Linux distributions, macOS versions, and Windows versions/environments is needed to ensure robustness and identify edge cases.
 *   **Usage:** Continue using `u7` or `u7.bat` as before. These wrappers will automatically:
     *   Check if Go is installed.
-    *   Build the underlying `u7go` executable if it's missing or if you run `u7 rebuild`.
+    *   Build the underlying `u7go` executable if it's missing or if you run `u7 update` (or `rebuild`).
     *   Pass your commands (e.g., `build`, `run`, `clean`, `--debug`) to the `u7go` program.
 *   **Feedback:** Report any issues encountered with the *new* wrapper system in this repository.
-
----
-
-**Legacy Wrapper Script Status:**
-*   ✅ **Linux/macOS (`./u7`):** Fully functional.
-*   ⏳ **Windows (`.\u7.bat`):** Partially functional, build/run may exit unexpectedly. Tracked in [unoften/U7Revisited#11](https://github.com/unoften/U7Revisited/issues/11).
 
 The easiest way to manage common development tasks (build, run, clean, IDE setup) is using the unified wrapper script `u7` (Linux/macOS) or `u7.bat` (Windows) located in the project root.
 
@@ -63,7 +62,6 @@ The easiest way to manage common development tasks (build, run, clean, IDE setup
     *   Run Release (Default - builds first if needed): `./u7 run` or `.\u7.bat run`
     *   Run Debug (builds first if needed): `./u7 run --debug` or `.\u7.bat run --debug`
     *   Run Quietly (Default): Logging shows Warnings/Errors only.
-    *   Run Verbosely: `./u7 run --verbose` or `./u7 run --debug --verbose` (Shows INFO level logs during loading)
     *   Run Release with game arguments: `./u7 run --some-game-flag` or `.\u7.bat run -- --some-game-flag`
     *   Run Debug with game arguments: `./u7 run --debug --some-game-flag` or `.\u7.bat run --debug -- --some-game-flag`
     *   **Running the Health Check:**
@@ -81,9 +79,7 @@ The easiest way to manage common development tasks (build, run, clean, IDE setup
 5.  **Utility Scripts:**
     *   Check and fix missing Lua requires: `./u7 scripts --fix-requires`
 
-For more options, run `./u7 --help` or `.\u7.bat --help`.
-
-The `u7` script calls other helper scripts (`build.*`, `run_u7.*`, `setup_ide.*`, `copy_executable.*`) located in the `scripts/` directory.
+For more options, run `./u7 --help` or `.\u7.bat --help` (this passes the `--help` flag to the underlying `u7go` application).
 
 ## Manual Building with Meson (Alternative)
 
