@@ -93,11 +93,13 @@ If you prefer not to use the `u7` wrapper script, you can use Meson directly.
         meson compile -C build-release
         ```
 
-The compiled executable will be located in `build-<type>/install_prefix/bin/` (e.g., `build-debug/install_prefix/bin/U7Revisited_debug`).
+**Important:** Meson places the compiled executable within the build directory at `build-<type>/install_prefix/bin/` (e.g., `build-debug/install_prefix/bin/U7Revisited_debug`). It does **not** place it directly in `Redist/`.
 
 ## Running the Game Manually (After Manual Build)
 
-If building manually with Meson, use the provided scripts in the `scripts/` directory to run the game. They copy the executable to the `Redist/` directory and run it from there.
+If building manually with Meson, you **must** use the provided scripts in the `scripts/` directory to run the game.
+
+**Why?** The game currently loads assets (like the `Data/` directory) relative to its executable's location. The run scripts perform the necessary step of copying the executable from its build location (`build-<type>/install_prefix/bin/`) to the `Redist/` directory and then execute it from `Redist/`, ensuring it can find its data. This behavior might be adjusted in the future.
 
 *   **On Linux/macOS:**
     ```bash
