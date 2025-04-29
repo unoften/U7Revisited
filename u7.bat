@@ -42,7 +42,7 @@ IF %PASS_THROUGH% EQU 1 (
 REM Check arguments case-insensitively
 IF /I "%~1" EQU "clean"       (SET DO_CLEAN=1       & SHIFT & GOTO ArgLoop)
 IF /I "%~1" EQU "build"       (SET DO_BUILD=1       & SHIFT & GOTO ArgLoop)
-IF /I "%~1" EQU "rebuild"     (SET DO_CLEAN=1 & SET DO_BUILD=1 & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "rebuild"     (SET DO_CLEAN=1       & SET DO_BUILD=1)
 IF /I "%~1" EQU "run"         (SET DO_RUN=1         & SHIFT & GOTO ArgLoop)
 IF /I "%~1" EQU "healthcheck" (SET DO_HEALTHCHECK=1 & SHIFT & GOTO ArgLoop)
 IF /I "%~1" EQU "configure"   (SET DO_CONFIGURE=1   & SHIFT & GOTO ArgLoop)
@@ -57,6 +57,9 @@ IF /I "%~1" EQU "warnings"    (SET SHOW_WARNINGS=1  & SHIFT & GOTO ArgLoop)
 IF /I "%~1" EQU "--warnings"  (SET SHOW_WARNINGS=1  & SHIFT & GOTO ArgLoop)
 IF /I "%~1" EQU "--fix-requires" (SET FIX_REQUIRES=1 & SHIFT & GOTO ArgLoop)
 IF /I "%~1" EQU "--"          (SET PASS_THROUGH=1   & SHIFT & GOTO ArgLoop)
+
+REM If we matched rebuild above, the flags are set, now shift and loop
+IF /I "%~1" EQU "rebuild"     (SHIFT & GOTO ArgLoop)
 
 REM If argument is not recognized, assume it's for run or pass along?
 REM For simplicity, let's ignore unknown args for now unless PASS_THROUGH is on
@@ -115,9 +118,21 @@ IF %HAS_COMMAND% EQU 1 (
         pushd "%GO_APP_DIR%"
         IF ERRORLEVEL 1 (call :HandleWrapperError "Initial build failed: Could not change directory." && exit /b 1)
         echo [u7 Wrapper] Running go mod tidy...
-        go mod tidy || (popd && call :HandleWrapperError "Initial 'go mod tidy' failed." && exit /b 1)
+        go mod tidy
+        SET BUILD_ERRORLEVEL=%ERRORLEVEL%
+        IF %BUILD_ERRORLEVEL% NEQ 0 (
+            popd
+            call :HandleWrapperError "Initial 'go mod tidy' failed."
+            exit /b %BUILD_ERRORLEVEL%
+        )
         echo [u7 Wrapper] Running go build...
-        go build -o "%GO_APP_NAME%" . || (popd && call :HandleWrapperError "Initial 'go build' failed." && exit /b 1)
+        go build -o "%GO_APP_NAME%" .
+        SET BUILD_ERRORLEVEL=%ERRORLEVEL%
+        IF %BUILD_ERRORLEVEL% NEQ 0 (
+             popd
+             call :HandleWrapperError "Initial 'go build' failed."
+             exit /b %BUILD_ERRORLEVEL%
+        )
         echo [u7 Wrapper] Initial build successful.
         popd
     )
@@ -153,7 +168,7 @@ IF %DO_SCRIPTS% EQU 1 (
 REM Execute Configure
 IF %DO_CONFIGURE% EQU 1 (
     echo [u7 Wrapper] --- Executing Configure (%BUILD_TYPE%) ---
-    call "%GO_BINARY_EXE_PATH%" configure %U7GO_ARGS%
+    call "%GO_BINARY_EXE_PATH%" configure "%U7GO_ARGS%"
     SET LAST_EXIT_CODE=%ERRORLEVEL%
     IF %LAST_EXIT_CODE% NEQ 0 (call :HandleWrapperError "Configure command failed (Code: %LAST_EXIT_CODE%)" && exit /b %LAST_EXIT_CODE%)
 )
@@ -161,7 +176,7 @@ IF %DO_CONFIGURE% EQU 1 (
 REM Execute Clean
 IF %DO_CLEAN% EQU 1 (
     echo [u7 Wrapper] --- Executing Clean (%BUILD_TYPE%) ---
-    call "%GO_BINARY_EXE_PATH%" clean %U7GO_ARGS%
+    call "%GO_BINARY_EXE_PATH%" clean "%U7GO_ARGS%"
     SET LAST_EXIT_CODE=%ERRORLEVEL%
     IF %LAST_EXIT_CODE% NEQ 0 (call :HandleWrapperError "Clean command failed (Code: %LAST_EXIT_CODE%)" && exit /b %LAST_EXIT_CODE%)
 )
@@ -169,7 +184,7 @@ IF %DO_CLEAN% EQU 1 (
 REM Execute Build
 IF %DO_BUILD% EQU 1 (
     echo [u7 Wrapper] --- Executing Build (%BUILD_TYPE%) ---
-    call "%GO_BINARY_EXE_PATH%" build %U7GO_ARGS%
+    call "%GO_BINARY_EXE_PATH%" build "%U7GO_ARGS%"
     SET LAST_EXIT_CODE=%ERRORLEVEL%
     IF %LAST_EXIT_CODE% NEQ 0 (call :HandleWrapperError "Build command failed (Code: %LAST_EXIT_CODE%)" && exit /b %LAST_EXIT_CODE%)
 )

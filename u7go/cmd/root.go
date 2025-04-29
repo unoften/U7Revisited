@@ -25,9 +25,10 @@ invoked via the 'u7' (Linux/macOS) or 'u7.bat' (Windows) wrapper scripts.
 It provides a cross-platform way to build, run, clean, and manage the project,
 replacing the older shell/batch scripts by executing the underlying 'u7go' program.
 
-Note on Updating:
-  To update the underlying 'u7go' program itself (after source changes),
-  use the wrapper-specific command: u7 update`,
+Special Wrapper Commands:
+  update              Update the underlying 'u7go' program to the latest version from source.
+
+(Note: 'update' is handled by the wrapper script, not u7go itself.)`,
 	// If run without subcommands, show help
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
@@ -92,6 +93,7 @@ func init() {
 	rootCmd.AddCommand(setupCmd)
 }
 
+/* // Remove unused function
 // Helper function (example, move to utils later)
 func printError(msg string, err error) {
 	// TODO: Use fatih/color for red output
@@ -101,3 +103,4 @@ func printError(msg string, err error) {
 		fmt.Fprintf(os.Stderr, "[U7GO ERROR] %s\n", msg)
 	}
 }
+*/
