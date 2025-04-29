@@ -114,7 +114,7 @@ var buildCmd = &cobra.Command{
 				// Append raw line, color later
 				filteredOutput = append(filteredOutput, line)
 			} else if isWarning {
-				color.Cyan("[DEBUG] Regex matched potential warning line: %s", line) // Debug print
+				//color.Cyan("[DEBUG] Regex matched potential warning line: %s", line) // Debug print
 				warningCount++
 				if warnings { // Only add warnings if flag is set
 					color.HiMagenta("[DEBUG] INSIDE 'if warnings' block - Appending RAW line!")
@@ -193,12 +193,4 @@ var buildCmd = &cobra.Command{
 
 func init() {
 	// This command uses the buildType and warnings flags defined in rootCmd
-}
-
-// Helper function for min(int, int) - needed for safe slicing
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

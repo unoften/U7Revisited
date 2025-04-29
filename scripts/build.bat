@@ -81,108 +81,101 @@ exit /b 0
 :ArgsDone
 
 echo --- Building U7Revisited (%BUILD_TYPE%) ---
+
 IF "%SHOW_WARNINGS%"=="true" echo --- Warnings will be shown (output not filtered) ---
 
-REM --- Clean ---
-IF "%SHOULD_CLEAN%"=="true" (
-    IF EXIST "%BUILD_DIR%\" (
-        echo [Clean] Removing build directory: %BUILD_DIR%...
-        rmdir /S /Q "%BUILD_DIR%"
-        IF !ERRORLEVEL! NEQ 0 (
-            echo [Clean] Error: Failed to remove directory %BUILD_DIR% >&2
-            exit /b 1
-        )
-        echo [Clean] Directory removed.
-        SET "SHOULD_CONFIGURE=true"
-    ) ELSE (
-        echo [Clean] Build directory %BUILD_DIR% not found. Skipping removal.
-    )
-)
+REM --- Using simplified IF for Clean logic ---
+IF "%SHOULD_CLEAN%"=="true" echo [Clean] Will attempt to remove %BUILD_DIR%...
+IF "%SHOULD_CLEAN%"=="true" IF EXIST "%BUILD_DIR%\" rmdir /S /Q "%BUILD_DIR%" && (echo [Clean] Directory removed. && SET "SHOULD_CONFIGURE=true") || (echo [Clean] Error: Failed to remove directory %BUILD_DIR% >&2 && exit /b 1)
+IF "%SHOULD_CLEAN%"=="true" IF NOT EXIST "%BUILD_DIR%\" echo [Clean] Build directory %BUILD_DIR% not found or already removed.
 
-REM --- Configure ---
+REM --- Determine if Setup/Configure is needed ---
 SET "DO_SETUP=false"
-IF "%SHOULD_CONFIGURE%"=="true" (
-    SET "DO_SETUP=true"
-) ELSE (
-    IF NOT EXIST "%BUILD_DIR%\meson-private\coredata.dat" (
-        SET "DO_SETUP=true"
-    )
-)
+IF "%SHOULD_CONFIGURE%"=="true" SET "DO_SETUP=true"
+IF NOT "%SHOULD_CONFIGURE%"=="true" IF NOT EXIST "%BUILD_DIR%\meson-private\coredata.dat" SET "DO_SETUP=true"
 
-IF "%DO_SETUP%"=="true" (
+REM --- Configure Block (using GOTO logic) ---
+IF NOT "%DO_SETUP%"=="true" GOTO :SkipSetup
+
+:PerformSetup
     echo [Configure] Configuring (%BUILD_TYPE%) in %BUILD_DIR%...
     where meson > nul 2> nul
-    IF !ERRORLEVEL! NEQ 0 (
-        echo [Configure] Error: 'meson' command not found in PATH. >&2
-        exit /b 1
-    )
-    meson setup "%BUILD_DIR%" --buildtype="%BUILD_TYPE%" %EXTRA_MESON_ARGS%
-    IF !ERRORLEVEL! NEQ 0 (
-        echo [Configure] Error: Meson setup failed! >&2
-        exit /b 1
-    )
+    IF !ERRORLEVEL! NEQ 0 GOTO :WhereMeson_Fail
+    :WhereMeson_OK
+    meson setup "%BUILD_DIR%" --buildtype="%BUILD_TYPE%"
+    IF !ERRORLEVEL! NEQ 0 GOTO :MesonSetup_Fail
+    :MesonSetup_OK
     echo [Configure] Meson setup complete.
-) ELSE (
-     IF NOT "%EXTRA_MESON_ARGS%"=="" (
+    GOTO :SetupDone
+
+:WhereMeson_Fail
+    echo [Configure] Error: 'meson' command not found in PATH. >&2
+    exit /b 1
+
+:MesonSetup_Fail
+    echo [Configure] Error: Meson setup failed! >&2
+    exit /b 1
+
+:SkipSetup
+     IF "%EXTRA_MESON_ARGS%"=="" GOTO :SkipReconfigure
          echo [Configure] Reconfiguring (%BUILD_TYPE%) in %BUILD_DIR% due to extra args...
-         meson configure "%BUILD_DIR%" %EXTRA_MESON_ARGS%
-          IF !ERRORLEVEL! NEQ 0 (
+     meson configure "%BUILD_DIR%" %EXTRA_MESON_ARGS%
+     IF !ERRORLEVEL! NEQ 0 GOTO :MesonConfigure_Fail
+     :MesonConfigure_OK
+     GOTO :ReconfigureDone
+     :MesonConfigure_Fail
             echo [Configure] Error: Meson configure failed! >&2
             exit /b 1
-          )
-     ) ELSE (
+     :SkipReconfigure
         echo [Configure] Build directory %BUILD_DIR% already configured. Skipping setup.
-     )
-)
+     :ReconfigureDone
+     REM Fall through to SetupDone
 
-REM --- Compile ---
+:SetupDone
+
+REM --- Compile Block (using GOTO logic) ---
 echo [Compile] Compiling (%BUILD_TYPE%) in %BUILD_DIR%...
-REM Batch cannot easily capture/filter/count like bash script.
-REM Just run the compile command directly.
 meson compile -C "%BUILD_DIR%"
 SET COMPILE_EXIT_CODE=!ERRORLEVEL!
-
-IF !COMPILE_EXIT_CODE! NEQ 0 (
+IF !COMPILE_EXIT_CODE! EQU 0 GOTO :Compile_OK
     echo [Compile] Error: Meson compile failed! (Exit Code: !COMPILE_EXIT_CODE!) >&2
     exit /b 1
-)
+:Compile_OK
 echo [Compile] Meson compile successful.
 
-REM Add note about warnings if requested but not filtered
-IF "%SHOW_WARNINGS%"=="true" (
+IF NOT "%SHOW_WARNINGS%"=="true" GOTO :SkipWarningNote
     echo [Compile] Note: Warnings requested; check full Meson output above.
-)
+:SkipWarningNote
 
 echo --- Build successful (%BUILD_TYPE%) ---
 
-REM --- Run ---
-IF "%SHOULD_RUN%"=="true" (
+REM --- Run Block (using GOTO logic) ---
+IF NOT "%SHOULD_RUN%"=="true" GOTO :SkipRunBlock
     echo.
     echo --- Running (%BUILD_TYPE%) ---
     SET "RUN_CMD=run_u7.bat"
     SET "RUN_SCRIPT_PATH=%SCRIPT_DIR%%RUN_CMD%"
     SET "FINAL_RUN_ARGS="
-
-    IF "%BUILD_TYPE%"=="debug" (
+    IF NOT "%BUILD_TYPE%"=="debug" GOTO :Run_ReleaseArgs
         SET "FINAL_RUN_ARGS=--debug %RUN_ARGS%"
-    ) ELSE (
+    GOTO :Run_ArgsSet
+    :Run_ReleaseArgs
         SET "FINAL_RUN_ARGS=%RUN_ARGS%"
-    )
-
-    IF NOT EXIST "%RUN_SCRIPT_PATH%" (
+    :Run_ArgsSet
+    IF EXIST "%RUN_SCRIPT_PATH%" GOTO :RunScript_Exists
         echo [Run] Error: %RUN_CMD% not found in %SCRIPT_DIR%. >&2
         exit /b 1
-    )
-
+    :RunScript_Exists
     echo [Run] Executing: %RUN_SCRIPT_PATH% %FINAL_RUN_ARGS%
     call "%RUN_SCRIPT_PATH%" %FINAL_RUN_ARGS%
     SET RUN_EXIT_CODE=!ERRORLEVEL!
-    IF !RUN_EXIT_CODE! NEQ 0 (
+    IF !RUN_EXIT_CODE! EQU 0 GOTO :Run_OK
         echo [Run] Process exited with code !RUN_EXIT_CODE!. >&2
         echo --- Run failed ---
         exit /b 1
-    )
+    :Run_OK
     echo --- Run finished ---
-)
+:SkipRunBlock
 
+echo [Build Script] Finished.
 exit /b 0 

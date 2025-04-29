@@ -31,20 +31,12 @@ SET GAME_ARGS=
 
 :ParseRunArgsLoop
 IF "%~1"=="" GOTO ParseRunArgsDone
-
-    IF /I "%~1"=="--debug" (
-        SET RUN_DEBUG=true
-    ) ELSE IF /I "%~1"=="--healthcheck" (
-        SET RUN_HEALTHCHECK=true
-        REM Healthcheck implies debug and verbose for the run
-        SET RUN_DEBUG=true
-        SET PASS_VERBOSE=true
-    ) ELSE IF /I "%~1"=="--verbose" (
-        SET PASS_VERBOSE=true
-    ) ELSE (
+    IF /I "%~1"=="--debug"       (SET RUN_DEBUG=true & GOTO :NextRunArg)
+    IF /I "%~1"=="--healthcheck" (SET RUN_HEALTHCHECK=true & SET RUN_DEBUG=true & SET PASS_VERBOSE=true & GOTO :NextRunArg)
+    IF /I "%~1"=="--verbose"     (SET PASS_VERBOSE=true & GOTO :NextRunArg)
         REM Collect other args as game args
         SET GAME_ARGS=!GAME_ARGS! %1
-    )
+:NextRunArg
     SHIFT
     GOTO ParseRunArgsLoop
 
@@ -55,48 +47,58 @@ SET TARGET_PATH=
 SET TARGET_EXE=
 
 REM Determine which version to prepare and run
-IF "%RUN_DEBUG%"=="true" (
-    IF EXIST "%SOURCE_DEBUG_PATH%" (
-        echo Preparing debug version...
-        SET SOURCE_PATH=%SOURCE_DEBUG_PATH%
-        SET TARGET_PATH=%TARGET_DEBUG_PATH%
-        SET TARGET_EXE=%TARGET_DEBUG_EXE%
-    ) ELSE (
-        echo Error: Debug source executable not found at %SOURCE_DEBUG_PATH%
-        echo Please build the debug version first.
-        exit /b 1
-    )
-) ELSE (
-    IF EXIST "%SOURCE_RELEASE_PATH%" (
+IF "%RUN_DEBUG%"=="true" GOTO :PrepareDebug
+
+:PrepareRelease
+    IF EXIST "%SOURCE_RELEASE_PATH%" GOTO :PrepareRelease_Exists
+    IF EXIST "%SOURCE_DEBUG_PATH%" GOTO :PrepareRelease_FallbackDebug
+    GOTO :Prepare_NotFound
+:PrepareRelease_Exists
         echo Preparing release version...
         SET SOURCE_PATH=%SOURCE_RELEASE_PATH%
         SET TARGET_PATH=%TARGET_RELEASE_PATH%
         SET TARGET_EXE=%TARGET_RELEASE_EXE%
-    ) ELSE IF EXIST "%SOURCE_DEBUG_PATH%" (
-        REM Fallback to debug if release not found and debug exists
+    GOTO :Prepare_Done
+:PrepareRelease_FallbackDebug
         echo Release version not found. Preparing debug version...
         SET SOURCE_PATH=%SOURCE_DEBUG_PATH%
         SET TARGET_PATH=%TARGET_DEBUG_PATH%
         SET TARGET_EXE=%TARGET_DEBUG_EXE%
-    ) ELSE (
+    GOTO :Prepare_Done
+
+:PrepareDebug
+    IF EXIST "%SOURCE_DEBUG_PATH%" GOTO :PrepareDebug_Exists
+    echo Error: Debug source executable not found at %SOURCE_DEBUG_PATH%
+    echo Please build the debug version first.
+    exit /b 1
+:PrepareDebug_Exists
+    echo Preparing debug version...
+    SET SOURCE_PATH=%SOURCE_DEBUG_PATH%
+    SET TARGET_PATH=%TARGET_DEBUG_PATH%
+    SET TARGET_EXE=%TARGET_DEBUG_EXE%
+    GOTO :Prepare_Done
+
+:Prepare_NotFound
         echo Error: Neither release nor debug source executable found.
         echo Checked paths:
         echo   %SOURCE_RELEASE_PATH%
         echo   %SOURCE_DEBUG_PATH%
         echo Please build the project first.
         exit /b 1
-    )
-)
+
+:Prepare_Done
 
 REM Ensure Redist directory exists
-IF NOT EXIST "%REDIST_DIR%" (
+IF EXIST "%REDIST_DIR%" GOTO :RedistDir_Exists
     echo Creating directory %REDIST_DIR%...
     mkdir "%REDIST_DIR%"
-    IF ERRORLEVEL 1 (
+IF ERRORLEVEL 1 GOTO :RedistDir_Fail
+:RedistDir_Exists
+GOTO :RedistDir_OK
+:RedistDir_Fail
         echo Error: Failed to create directory %REDIST_DIR%
         exit /b 1
-    )
-)
+:RedistDir_OK
 
 REM Copy the executable to Redist using the helper script (consistent logic)
 SET "COPY_SCRIPT=%SCRIPT_DIR%copy_executable.bat"
@@ -104,26 +106,24 @@ SET "COPY_ARG="
 IF "%RUN_DEBUG%"=="true" SET "COPY_ARG=--debug"
 echo Copying executable via: %COPY_SCRIPT% %COPY_ARG%
 call "%COPY_SCRIPT%" %COPY_ARG%
-IF ERRORLEVEL 1 (
+IF ERRORLEVEL 1 GOTO :CopyExe_Fail
+:CopyExe_OK
+GOTO :CopyExe_Done
+:CopyExe_Fail
     echo Error: Failed to copy executable using %COPY_SCRIPT%.
     exit /b 1
-)
+:CopyExe_Done
 
 REM Change to the Redist directory so the application can find Data etc.
 echo Changing directory to %REDIST_DIR%
 pushd "%REDIST_DIR%"
-IF ERRORLEVEL 1 (
-    echo Failed to change directory to %REDIST_DIR%
-    exit /b 1
-)
+IF ERRORLEVEL 1 GOTO :Pushd_Fail
+:Pushd_OK
 
 REM Prepare arguments for the executable
 SET EXEC_ARGS=
-IF "%RUN_HEALTHCHECK%"=="true" (
-    SET EXEC_ARGS=--healthcheck
-)
+IF "%RUN_HEALTHCHECK%"=="true" SET EXEC_ARGS=--healthcheck
 IF "%PASS_VERBOSE%"=="true" (
-    REM Avoid double adding if healthcheck already added it
     echo "%EXEC_ARGS%" | findstr /I /C:"--verbose" > nul
     IF ERRORLEVEL 1 SET EXEC_ARGS=%EXEC_ARGS% --verbose
 )
@@ -138,3 +138,7 @@ SET EXIT_CODE=%ERRORLEVEL%
 popd
 echo Exited with code %EXIT_CODE%
 exit /b %EXIT_CODE%
+
+:Pushd_Fail
+echo Failed to change directory to %REDIST_DIR%
+exit /b 1

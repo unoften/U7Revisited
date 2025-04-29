@@ -33,32 +33,36 @@ IF /I "%~1"=="--debug" (
 )
 
 REM Create Redist directory if it doesn't exist
-IF NOT EXIST "%REDIST_DIR%\" (
+IF EXIST "%REDIST_DIR%\" GOTO :RedistDir_OK_Copy
     echo IDE Helper: Creating directory %REDIST_DIR%...
     mkdir "%REDIST_DIR%"
-    IF !ERRORLEVEL! NEQ 0 (
+IF !ERRORLEVEL! NEQ 0 GOTO :RedistDir_Fail_Copy
+:RedistDir_OK_Copy
+GOTO :RedistDir_Done_Copy
+:RedistDir_Fail_Copy
         echo Error (Helper Script): Failed to create directory %REDIST_DIR% >&2
         exit /b 1
-    )
-)
+:RedistDir_Done_Copy
 
-REM Check if source exists before copying
-IF "%SOURCE_PATH%"=="" (
+REM Check if source path variable is set
+IF NOT "%SOURCE_PATH%"=="" GOTO :SourcePath_OK
     echo Error (Helper Script): Source path variable is empty. Argument was: %1 >&2
     exit /b 1
-)
-IF NOT EXIST "%SOURCE_PATH%" (
+:SourcePath_OK
+
+REM Check if source file exists
+IF EXIST "%SOURCE_PATH%" GOTO :SourceFile_OK
     echo Error (Helper Script): Source executable for copy not found at %SOURCE_PATH% >&2
     echo Note: Assumed install path is build-type\%INSTALL_SUBDIR% >&2
     exit /b 1
-)
+:SourceFile_OK
 
 echo IDE Helper: Copying %SOURCE_PATH% to %TARGET_PATH%...
 copy /Y "%SOURCE_PATH%" "%TARGET_PATH%" > nul
-IF !ERRORLEVEL! NEQ 0 (
-    echo Error (Helper Script): Failed to copy executable. >&2
-    exit /b 1
-)
-
+IF !ERRORLEVEL! NEQ 0 GOTO :Copy_Fail
+:Copy_OK
 echo IDE Helper: Copy successful.
 exit /b 0 
+:Copy_Fail
+echo Error (Helper Script): Failed to copy executable. >&2
+exit /b 1 
