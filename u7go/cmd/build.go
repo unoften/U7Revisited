@@ -85,10 +85,17 @@ var buildCmd = &cobra.Command{
 
 		s.Stop() // Stop spinner regardless of success/error
 
+		// --- Debug: Print raw output ---
+		// color.Cyan("[DEBUG] Raw compile output (first 500 chars):\n%s\n--------------------", compileOutput[:min(500, len(compileOutput))])
+
+		// --- Debug: Print flag value ---
+		// color.Magenta("[DEBUG] warnings flag value: %t", warnings)
+
 		// Process output for errors/warnings
 		errorCount := 0
 		warningCount := 0
-		var filteredOutput []string
+		// Initialize with capacity
+		filteredOutput := make([]string, 0, 100)
 		outputScanner := bufio.NewScanner(strings.NewReader(compileOutput))
 
 		// Basic regex for typical compiler warnings/errors (adjust as needed)
@@ -98,22 +105,32 @@ var buildCmd = &cobra.Command{
 
 		for outputScanner.Scan() {
 			line := outputScanner.Text()
+			// color.HiBlack("[DEBUG] Scanning line: %s", line) // Debug print inside loop
 			isError := errorRegex.MatchString(line)
 			isWarning := warningRegex.MatchString(line)
 
 			if isError {
 				errorCount++
-				filteredOutput = append(filteredOutput, color.RedString(line)) // Color errors red
+				// Append raw line, color later
+				filteredOutput = append(filteredOutput, line)
 			} else if isWarning {
+				color.Cyan("[DEBUG] Regex matched potential warning line: %s", line) // Debug print
 				warningCount++
 				if warnings { // Only add warnings if flag is set
-					filteredOutput = append(filteredOutput, color.YellowString(line)) // Color warnings yellow
+					color.HiMagenta("[DEBUG] INSIDE 'if warnings' block - Appending RAW line!")
+					color.Yellow("[DEBUG] Line content JUST BEFORE append: '%s'", line)
+					filteredOutput = append(filteredOutput, line)
+					// Add this debug line
+					// color.Cyan("[DEBUG] Size of filteredOutput IMMEDIATELY AFTER append: %d", len(filteredOutput))
 				}
 			} else {
 				// Optionally include non-error/warning lines if needed
 				// filteredOutput = append(filteredOutput, line)
 			}
 		}
+
+		// --- Debug: Print filtered list size ---
+		// color.Magenta("[DEBUG] Size of filteredOutput: %d", len(filteredOutput))
 
 		// Print filtered summary
 		color.Cyan("\n--- Build Summary ---")
@@ -132,9 +149,20 @@ var buildCmd = &cobra.Command{
 
 		// Print filtered errors/warnings
 		if len(filteredOutput) > 0 {
-			fmt.Println(strings.Join(filteredOutput, "\n"))
+			var coloredOutputLines []string
+			for _, l := range filteredOutput {
+				if errorRegex.MatchString(l) {
+					coloredOutputLines = append(coloredOutputLines, color.RedString(l))
+				} else if warningRegex.MatchString(l) {
+					coloredOutputLines = append(coloredOutputLines, color.YellowString(l))
+				} else {
+					coloredOutputLines = append(coloredOutputLines, l)
+				}
+			}
+			fmt.Println(strings.Join(coloredOutputLines, "\n"))
 		} else if compileErr == nil {
-			color.Green("Build completed with no errors or warnings reported.")
+			// Remove this line - the final status block below handles this correctly
+			color.Green("Build complete.")
 		}
 
 		// Final status
@@ -144,12 +172,20 @@ var buildCmd = &cobra.Command{
 				color.Yellow("Additionally, %d warning(s) were reported.", warningCount)
 			}
 			os.Exit(1)
+		} else if warningCount > 0 && warnings {
+			color.Green("\nBuild completed successfully with %d warning(s) reported.", warningCount)
 		} else if warningCount > 0 && !warnings {
 			color.Yellow("\nBuild completed successfully, but %d warning(s) were reported (use --warnings to see them).", warningCount)
-		} else if warningCount > 0 && warnings {
-			color.Green("\nBuild completed successfully with %d warning(s).", warningCount)
+		} else if errorCount == 0 && compileErr == nil {
+			// This condition might be slightly redundant now, but safe to keep
+			// Let's check specifically for "no work to do"
+			if strings.Contains(compileOutput, "ninja: no work to do.") {
+				color.Green("Project is already up-to-date. Nothing to build.")
+				color.Yellow("(Use 'u7 clean build ...' to force a rebuild if needed)")
+			}
 		} else {
-			// Success message printed above if no errors/warnings
+			// Fallback/unexpected case - should not happen if logic is correct
+			color.HiBlack("Build finished with unexpected state (Errors: %d, Warnings: %d, Compile Err: %v)", errorCount, warningCount, compileErr)
 		}
 
 	},
@@ -157,4 +193,12 @@ var buildCmd = &cobra.Command{
 
 func init() {
 	// This command uses the buildType and warnings flags defined in rootCmd
+}
+
+// Helper function for min(int, int) - needed for safe slicing
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

@@ -1,195 +1,210 @@
 @echo off
-echo [u7 Debug] Script Start.
 setlocal enabledelayedexpansion
-echo [u7 Debug] setlocal done.
 
+REM --- Config --- 
 SET "SCRIPT_DIR=%~dp0"
-REM Ensure SCRIPT_DIR ends with a backslash
-REM Breaking down the IF...SET for clarity
-SET NeedsSlash=0
-IF "%SCRIPT_DIR:~-1%" NEQ "\" SET NeedsSlash=1
-IF %NeedsSlash% EQU 1 SET "SCRIPT_DIR=%SCRIPT_DIR%\"
+IF "%SCRIPT_DIR:~-1%" NEQ "\" SET "SCRIPT_DIR=%SCRIPT_DIR%\"
 SET "GO_APP_DIR=%SCRIPT_DIR%u7go"
 SET "GO_APP_NAME=u7go.exe"
-REM Path where the binary will be BUILT and EXECUTED (inside the go app dir)
 SET "GO_BINARY_EXE_PATH=%GO_APP_DIR%\%GO_APP_NAME%"
-echo [u7 Debug] Variables set. Before error handler definition.
 
-REM --- Argument Parsing for Special Wrapper Commands ---
-SET DO_REBUILD=0
-IF /I "%~1" EQU "update" SET DO_REBUILD=1
+REM --- Default Settings & Action Flags ---
+SET BUILD_TYPE=release
+SET SHOW_WARNINGS=0
+SET DO_CLEAN=0
+SET DO_BUILD=0
+SET DO_RUN=0
+SET DO_HEALTHCHECK=0
+SET DO_CONFIGURE=0
+SET DO_SETUP=0
+SET DO_SCRIPTS=0
+SET DO_UPDATE=0
+SET FIX_REQUIRES=0
+SET GAME_ARGS_STR=
+SET PASS_THROUGH=0
 
-IF %DO_REBUILD% EQU 1 (
+REM --- Argument Parsing ---
+REM Use a loop with SHIFT (less clean than FOR but more traditional for complex batch args)
+:ArgLoop
+IF "%~1"=="" GOTO EndArgLoop
+
+IF %PASS_THROUGH% EQU 1 (
+    REM Append to GAME_ARGS_STR, handle spaces carefully
+    IF defined GAME_ARGS_STR (
+        SET "GAME_ARGS_STR=!GAME_ARGS_STR! "%~1""
+    ) ELSE (
+        SET "GAME_ARGS_STR="%~1""
+    )
+    SHIFT
+    GOTO ArgLoop
+)
+
+REM Check arguments case-insensitively
+IF /I "%~1" EQU "clean"       (SET DO_CLEAN=1       & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "build"       (SET DO_BUILD=1       & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "rebuild"     (SET DO_CLEAN=1 & SET DO_BUILD=1 & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "run"         (SET DO_RUN=1         & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "healthcheck" (SET DO_HEALTHCHECK=1 & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "configure"   (SET DO_CONFIGURE=1   & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "setup"       (SET DO_SETUP=1       & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "scripts"     (SET DO_SCRIPTS=1     & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "update"      (SET DO_UPDATE=1      & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "debug"       (SET BUILD_TYPE=debug & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "--debug"     (SET BUILD_TYPE=debug & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "release"     (SET BUILD_TYPE=release & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "--release"   (SET BUILD_TYPE=release & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "warnings"    (SET SHOW_WARNINGS=1  & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "--warnings"  (SET SHOW_WARNINGS=1  & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "--fix-requires" (SET FIX_REQUIRES=1 & SHIFT & GOTO ArgLoop)
+IF /I "%~1" EQU "--"          (SET PASS_THROUGH=1   & SHIFT & GOTO ArgLoop)
+
+REM If argument is not recognized, assume it's for run or pass along?
+REM For simplicity, let's ignore unknown args for now unless PASS_THROUGH is on
+echo [u7 Wrapper WARNING] Ignoring unknown argument: %~1 >&2
+SHIFT
+GOTO ArgLoop
+
+:EndArgLoop
+
+REM --- Action Execution ---
+
+REM 0. Handle Update First (Exclusive Action)
+IF %DO_UPDATE% EQU 1 (
     echo [u7 Wrapper] 'update' command detected: Rebuilding u7go...
-    IF NOT EXIST "%GO_APP_DIR%\" (
-        echo [u7 Wrapper ERROR] Cannot update u7go: Go application directory not found: %GO_APP_DIR% >&2
-        exit /b 1
-    )
-    
-    REM Verify Go exists before trying to build
-    where go > nul 2> nul
-    IF ERRORLEVEL 1 (
-         echo [u7 Wrapper ERROR] Cannot update u7go: 'go' command not found in PATH. >&2
-         exit /b 1
-    )
-    go version > nul 2> nul
-    IF ERRORLEVEL 1 (
-         echo [u7 Wrapper ERROR] Cannot update u7go: 'go version' failed. Check Go installation. >&2
-         exit /b 1
-    )
+    REM -- Go Check within Update --
+    where go > nul 2> nul || (call :HandleWrapperError "Cannot update: 'go' command not found." && exit /b 1)
+    go version > nul 2> nul || (call :HandleWrapperError "Cannot update: 'go version' failed." && exit /b 1)
+    REM -- End Go Check --
+    IF NOT EXIST "%GO_APP_DIR%\" (call :HandleWrapperError "Cannot update: Go application directory not found: %GO_APP_DIR%" && exit /b 1)
 
     pushd "%GO_APP_DIR%"
-    IF ERRORLEVEL 1 (
-        echo [u7 Wrapper ERROR] u7go update failed: Could not change directory to %GO_APP_DIR%. >&2
-        exit /b 1
-    )
-    echo [u7 Wrapper] Running: go build -o %GO_APP_NAME% .
+    IF ERRORLEVEL 1 (call :HandleWrapperError "Cannot update: Failed pushd %GO_APP_DIR%" && exit /b 1)
+    echo [u7 Wrapper] Running go mod tidy...
+    go mod tidy || (popd && call :HandleWrapperError "'go mod tidy' failed during update." && exit /b 1)
+    echo [u7 Wrapper] Running go build...
     del /Q /F "%GO_APP_NAME%" > nul 2> nul
-    REM Run go mod tidy first
-    echo [u7 Wrapper] Running go mod tidy...
-    go mod tidy
-    IF ERRORLEVEL 1 (
-        echo [u7 Wrapper ERROR] 'go mod tidy' failed during update in %GO_APP_DIR%. >&2
-        popd
-        exit /b 1
-    )
-    REM Now build
-    go build -o "%GO_APP_NAME%" .
-    IF ERRORLEVEL 1 (
-        echo [u7 Wrapper ERROR] u7go update failed during 'go build' in %GO_APP_DIR%. >&2
-        popd
-        exit /b 1
-    )
+    go build -o "%GO_APP_NAME%" . || (popd && call :HandleWrapperError "'go build' failed during update." && exit /b 1)
     echo [u7 Wrapper] u7go update successful: %GO_BINARY_EXE_PATH%
-    dir "%GO_BINARY_EXE_PATH%" | findstr /B /C:" " /C:"." 
+    dir "%GO_BINARY_EXE_PATH%" | findstr /B /C:" " /C:"."
     popd
     exit /b 0
 )
 
-REM ==============================================
-REM SCRIPT EXECUTION LOGIC ENDS HERE
-REM Any code below this point should only be reached via CALL or GOTO
-REM ==============================================
+REM 1. Check Go exists and initial u7go build if any other command is run
+SET HAS_COMMAND=0
+IF %DO_CLEAN% EQU 1 SET HAS_COMMAND=1
+IF %DO_BUILD% EQU 1 SET HAS_COMMAND=1
+IF %DO_RUN% EQU 1 SET HAS_COMMAND=1
+IF %DO_HEALTHCHECK% EQU 1 SET HAS_COMMAND=1
+IF %DO_CONFIGURE% EQU 1 SET HAS_COMMAND=1
+IF %DO_SETUP% EQU 1 SET HAS_COMMAND=1
+IF %DO_SCRIPTS% EQU 1 SET HAS_COMMAND=1
 
-REM --- Check Go Installation --- 
-echo [u7 Debug] Reached Go check section...
-REM 1. Check for Go command
-echo [u7 Debug] About to run 'where go'...
-where go > nul 2> nul
-echo [u7 Debug] Finished 'where go'. Checking ERRORLEVEL %ERRORLEVEL%...
-IF ERRORLEVEL 1 GOTO GoNotFound
-
-REM 1b. Verify Go command works
-echo [u7 Debug] About to run 'go version'...
-go version > nul 2> nul
-echo [u7 Debug] Finished 'go version'. Checking ERRORLEVEL %ERRORLEVEL%...
-IF ERRORLEVEL 1 GOTO GoCommandFailed
-
-REM --- Go seems OK, continue script ---
-echo [u7 Wrapper] Found functional Go command.
-GOTO ContinueScript
-
-:GoNotFound
-    echo [u7 Wrapper ERROR] 'go' command not found in PATH. >&2
-    echo. >&2
-    echo   Please install Go (version 1.18 or newer recommended) from: >&2
-    echo     https://golang.org/dl/ >&2
-    echo. >&2
-    echo   Ensure the Go installation directory (e.g., C:\Go\bin) is added to your system PATH environment variable. >&2
-    exit /b 1
-
-:GoCommandFailed
-    echo [u7 Wrapper ERROR] 'go' command was found, but 'go version' failed to execute. >&2
-    echo   This might indicate a corrupted Go installation or PATH issues. >&2
-    echo. >&2
-    echo   Please ensure Go is correctly installed and accessible. >&2
-    echo   Download: https://golang.org/dl/ >&2
-    exit /b 1
-
-:ContinueScript
-REM 2. Check if u7go directory exists
-IF NOT EXIST "%GO_APP_DIR%\" (
-    echo [u7 Wrapper ERROR] Go application source directory not found: %GO_APP_DIR% >&2
-    exit /b 1
-)
-
-REM 3. Check if u7go.exe binary exists inside u7go/, build if not
-IF NOT EXIST "%GO_BINARY_EXE_PATH%" (
-    echo [u7 Wrapper] Go application binary '%GO_APP_NAME%' not found. Building...
-    
-    REM Store current dir and cd, then restore
-    pushd "%GO_APP_DIR%"
-    IF ERRORLEVEL 1 (
-        call :HandleWrapperError "Failed to change directory to %GO_APP_DIR%."
+IF %HAS_COMMAND% EQU 1 (
+    where go > nul 2> nul || (
+        echo [u7 Wrapper ERROR] Go command not found in PATH. >&2
+        echo   Please install Go (e.g., from https://golang.org/dl/) and add it to PATH. >&2
+        exit /b 1
     )
-
-    REM Run go mod tidy first
-    echo [u7 Wrapper] Running go mod tidy...
-    go mod tidy
-    IF ERRORLEVEL 1 (
-        popd
-        call :HandleWrapperError "'go mod tidy' failed in %GO_APP_DIR%."
+    go version > nul 2> nul || (
+        echo [u7 Wrapper ERROR] 'go version' failed. Check Go installation/PATH. >&2
+        exit /b 1
     )
-    
-    REM Build the application inside the current directory (u7go)
-    echo [u7 Wrapper] Running go build... (Output: %GO_APP_NAME%)
-    REM Clear any old local binary first
-    del /Q /F "%GO_APP_NAME%" > nul 2> nul 
-    go build -o "%GO_APP_NAME%" .
-    IF ERRORLEVEL 1 (
-        popd
-        call :HandleWrapperError "'go build' failed to create %GO_APP_NAME% in %GO_APP_DIR%."
-    )
-    
-    REM Check if build succeeded and created the file
     IF NOT EXIST "%GO_BINARY_EXE_PATH%" (
+        echo [u7 Wrapper] Go application binary not found. Performing initial build...
+        pushd "%GO_APP_DIR%"
+        IF ERRORLEVEL 1 (call :HandleWrapperError "Initial build failed: Could not change directory." && exit /b 1)
+        echo [u7 Wrapper] Running go mod tidy...
+        go mod tidy || (popd && call :HandleWrapperError "Initial 'go mod tidy' failed." && exit /b 1)
+        echo [u7 Wrapper] Running go build...
+        go build -o "%GO_APP_NAME%" . || (popd && call :HandleWrapperError "Initial 'go build' failed." && exit /b 1)
+        echo [u7 Wrapper] Initial build successful.
         popd
-        call :HandleWrapperError "Target binary check failed after build. %GO_BINARY_EXE_PATH% not found."
     )
-    echo [u7 Wrapper] Go application built successfully.
-    popd
 )
 
-REM 4. Execute the Go application from its location inside u7go/, passing all arguments
-REM %* passes all arguments as they were received by this script
-echo [u7 Wrapper] Preparing to execute: %GO_BINARY_EXE_PATH% %*
-echo [u7 Wrapper] --- Executing Go application ---
-echo.
+REM 2. Prepare Base u7go Command Args
+SET U7GO_ARGS=--buildtype=%BUILD_TYPE%
+IF %SHOW_WARNINGS% EQU 1 SET "U7GO_ARGS=%U7GO_ARGS% --warnings"
 
-REM Execute and branch based on success (ERRORLEVEL 0) or failure (ERRORLEVEL non-zero)
-"%GO_BINARY_EXE_PATH%" %* && (
-    REM Success Path
-    REM Don't echo success here, let Go app handle its output
-    endlocal
-    exit /b 0
-) || (
-    REM Failure Path
-    REM Capture the non-zero exit code immediately
-    SET U7GO_EXIT_CODE=%ERRORLEVEL%
-    echo [u7 Wrapper ERROR] Go application exited with error code: %U7GO_EXIT_CODE%. >&2
-    endlocal
-    exit /b %U7GO_EXIT_CODE%
+REM --- Execute Actions Sequentially ---
+SET LAST_EXIT_CODE=0
+
+REM Execute Setup (Exclusive Action)
+IF %DO_SETUP% EQU 1 (
+    echo [u7 Wrapper] --- Executing Setup ---
+    call "%GO_BINARY_EXE_PATH%" setup %U7GO_ARGS%
+    SET LAST_EXIT_CODE=%ERRORLEVEL%
+    IF %LAST_EXIT_CODE% NEQ 0 (call :HandleWrapperError "Setup command failed (Code: %LAST_EXIT_CODE%)")
+    exit /b %LAST_EXIT_CODE%
 )
 
-REM ==============================================
-REM SCRIPT EXECUTION LOGIC ENDS HERE
-REM Any code below this point should only be reached via CALL or GOTO
-REM ==============================================
+REM Execute Scripts (Currently Exclusive Action)
+IF %DO_SCRIPTS% EQU 1 (
+    echo [u7 Wrapper] --- Executing Scripts ---
+    SET SCRIPT_FLAGS=
+    IF %FIX_REQUIRES% EQU 1 SET "SCRIPT_FLAGS=--fix-requires"
+    call "%GO_BINARY_EXE_PATH%" scripts %SCRIPT_FLAGS% %U7GO_ARGS%
+    SET LAST_EXIT_CODE=%ERRORLEVEL%
+    IF %LAST_EXIT_CODE% NEQ 0 (call :HandleWrapperError "Scripts command failed (Code: %LAST_EXIT_CODE%)")
+    exit /b %LAST_EXIT_CODE%
+)
 
-REM --- Subroutines ---
+REM Execute Configure
+IF %DO_CONFIGURE% EQU 1 (
+    echo [u7 Wrapper] --- Executing Configure (%BUILD_TYPE%) ---
+    call "%GO_BINARY_EXE_PATH%" configure %U7GO_ARGS%
+    SET LAST_EXIT_CODE=%ERRORLEVEL%
+    IF %LAST_EXIT_CODE% NEQ 0 (call :HandleWrapperError "Configure command failed (Code: %LAST_EXIT_CODE%)" && exit /b %LAST_EXIT_CODE%)
+)
+
+REM Execute Clean
+IF %DO_CLEAN% EQU 1 (
+    echo [u7 Wrapper] --- Executing Clean (%BUILD_TYPE%) ---
+    call "%GO_BINARY_EXE_PATH%" clean %U7GO_ARGS%
+    SET LAST_EXIT_CODE=%ERRORLEVEL%
+    IF %LAST_EXIT_CODE% NEQ 0 (call :HandleWrapperError "Clean command failed (Code: %LAST_EXIT_CODE%)" && exit /b %LAST_EXIT_CODE%)
+)
+
+REM Execute Build
+IF %DO_BUILD% EQU 1 (
+    echo [u7 Wrapper] --- Executing Build (%BUILD_TYPE%) ---
+    call "%GO_BINARY_EXE_PATH%" build %U7GO_ARGS%
+    SET LAST_EXIT_CODE=%ERRORLEVEL%
+    IF %LAST_EXIT_CODE% NEQ 0 (call :HandleWrapperError "Build command failed (Code: %LAST_EXIT_CODE%)" && exit /b %LAST_EXIT_CODE%)
+)
+
+REM Execute Run or Healthcheck (Mutually Exclusive)
+IF %DO_RUN% EQU 1 (
+    echo [u7 Wrapper] --- Executing Run (%BUILD_TYPE%) ---
+    call "%GO_BINARY_EXE_PATH%" run %U7GO_ARGS% -- %GAME_ARGS_STR%
+    SET LAST_EXIT_CODE=%ERRORLEVEL%
+    REM Error message printed by Go app itself
+) ELSE IF %DO_HEALTHCHECK% EQU 1 (
+    echo [u7 Wrapper] --- Executing Healthcheck ---
+    call "%GO_BINARY_EXE_PATH%" healthcheck
+    SET LAST_EXIT_CODE=%ERRORLEVEL%
+    REM Error message printed by Go app itself
+)
+
+REM Handle case where only flags were given (or no recognized command)
+IF %HAS_COMMAND% EQU 0 IF %DO_UPDATE% EQU 0 (
+    echo [u7 Wrapper] No specific command given, executing u7go with flags/args...
+    call "%GO_BINARY_EXE_PATH%" %U7GO_ARGS% %*
+    SET LAST_EXIT_CODE=%ERRORLEVEL%
+)
+
+endlocal
+exit /b %LAST_EXIT_CODE%
+
+
+REM ==============================================
+REM Subroutines Below
+REM ==============================================
 
 REM Simple Error Print Subroutine
 :HandleWrapperError
-    REM echo [u7 Wrapper ERROR] Inside HandleWrapperError subroutine... >&2
-    echo [u7 Wrapper ERROR] Raw argument received: %1 >&2
-    echo [u7 Wrapper ERROR] Argument after ~ processing: %~1 >&2
-    REM Use EQU for safer string comparison
-    IF "%~1" EQU "" (
-      echo [u7 Wrapper ERROR] MESSAGE WAS BLANK OR MISSING! Check calling line. >&2
-    ) ELSE (
-      echo [u7 Wrapper ERROR] Message: %~1 >&2
-    )
+    echo [u7 Wrapper ERROR] %~1 >&2
     exit /b 1
-REM --- End of error handler ---
 
 REM --- End of File --- 

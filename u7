@@ -20,48 +20,80 @@ print_wrapper_error() {
     echo -e "${CLR_RED}[u7 Wrapper ERROR] $1${CLR_RST}" >&2
 }
 
-# --- Argument Parsing for Special Wrapper Commands ---
-DO_REBUILD=false
-COMMAND_GIVEN=false
+# --- Default Settings & Action Flags ---
+BUILD_TYPE="release" # Default build type
+SHOW_WARNINGS=false
+DO_CLEAN=false
+DO_BUILD=false
+DO_RUN=false
+DO_HEALTHCHECK=false
+DO_CONFIGURE=false
+DO_SETUP=false
+DO_SCRIPTS=false
+DO_UPDATE=false
+FIX_REQUIRES=false # Specific script flag
+declare -a GAME_ARGS=() # Array for arguments after --
 
-if [[ "$1" == "update" ]]; then
-    DO_REBUILD=true
-    COMMAND_GIVEN=true
-fi
+# --- Argument Parsing ---
+PASS_THROUGH_ARGS=false
+for arg in "$@"; do
+    if [[ "$PASS_THROUGH_ARGS" == true ]]; then
+        GAME_ARGS+=("$arg")
+        continue
+    fi
 
-# If only update was requested, do it and exit.
-if [[ "${DO_REBUILD}" == true ]]; then
+    case "$arg" in
+        clean) DO_CLEAN=true ;;
+        build) DO_BUILD=true ;;
+        rebuild) DO_CLEAN=true; DO_BUILD=true ;; # Add rebuild alias
+        run) DO_RUN=true ;;
+        healthcheck) DO_HEALTHCHECK=true ;;
+        configure) DO_CONFIGURE=true ;;
+        setup) DO_SETUP=true ;;
+        scripts) DO_SCRIPTS=true ;;
+        update) DO_UPDATE=true ;;
+        debug|--debug) BUILD_TYPE="debug" ;;
+        release|--release) BUILD_TYPE="release" ;; # Allow explicit release
+        warnings|--warnings) SHOW_WARNINGS=true ;;
+        --fix-requires) FIX_REQUIRES=true ;; # Capture script flag
+        --) PASS_THROUGH_ARGS=true ;; # Start passing args to game
+        *)            
+            # Assume unknown args before -- might be game args if run is specified
+            # Or potentially flags for u7go itself? For now, add to game args if run requested.
+            if [[ "$DO_RUN" == true ]]; then
+                GAME_ARGS+=("$arg")
+            else
+                 # Could be an error, or a flag for a command like configure/build?
+                 # For now, let u7go handle unknown flags/args later if no action matched.
+                 # Or print a warning? Let's just pass it along.
+                 # GAME_ARGS+=("$arg") # Re-enable if we want to pass all unknown args
+                 :
+            fi
+             ;;
+    esac
+done
+
+# --- Action Execution ---
+
+# 0. Handle Update First (Exclusive Action)
+if [[ "$DO_UPDATE" == true ]]; then
     echo -e "${CLR_BLU}[u7 Wrapper] 'update' command detected: Rebuilding u7go...${CLR_RST}"
-    # --- Go Check within Rebuild ---
-    if ! command -v go &> /dev/null; then
-        print_wrapper_error "Cannot rebuild: 'go' command not found in PATH."
-        exit 1
-    fi
-    if ! go version &> /dev/null; then
-        print_wrapper_error "Cannot rebuild: 'go version' failed. Check Go installation."
-        exit 1
-    fi
+    # --- Go Check within Update ---
+    if ! command -v go &> /dev/null; then print_wrapper_error "Cannot update: 'go' command not found in PATH."; exit 1; fi
+    if ! go version &> /dev/null; then print_wrapper_error "Cannot update: 'go version' failed. Check Go installation."; exit 1; fi
     # --- End Go Check ---
-    if [ ! -d "${GO_APP_DIR}" ]; then
-        print_wrapper_error "Cannot rebuild: Go application directory not found: ${GO_APP_DIR}"
-        exit 1
-    fi
+    if [ ! -d "${GO_APP_DIR}" ]; then print_wrapper_error "Cannot update: Go application directory not found: ${GO_APP_DIR}"; exit 1; fi
+
     ORIGINAL_DIR=$(pwd)
-    echo "[u7 Wrapper] Changing directory to: ${GO_APP_DIR}" # Removed color
+    echo "[u7 Wrapper] Changing directory to: ${GO_APP_DIR}"
     cd "${GO_APP_DIR}" || exit 1
-    echo "[u7 Wrapper] Running command: go build -o \"${GO_APP_NAME}\" ." # Removed color
-    rm -f "./${GO_APP_NAME}" # Clear any old binary first
-    # Run go mod tidy first in case new dependencies were added
     echo "[u7 Wrapper] Running go mod tidy..."
-    if ! go mod tidy; then
-        print_wrapper_error "'go mod tidy' failed during update in ${GO_APP_DIR}."
-        cd "${ORIGINAL_DIR}"
-        exit 1
-    fi
-    # Now build
+    if ! go mod tidy; then print_wrapper_error "'go mod tidy' failed during update in ${GO_APP_DIR}."; cd "${ORIGINAL_DIR}"; exit 1; fi
+    echo "[u7 Wrapper] Running go build -o \"${GO_APP_NAME}\" ."
+    rm -f "./${GO_APP_NAME}"
     if go build -o "${GO_APP_NAME}" .; then
         echo -e "${CLR_GRN}[u7 Wrapper] u7go update successful: ${GO_BINARY_EXE_PATH}${CLR_RST}"
-        ls -l "${GO_BINARY_EXE_PATH}" # Show details of the new file
+        ls -l "${GO_BINARY_EXE_PATH}"
         cd "${ORIGINAL_DIR}"
         exit 0
     else
@@ -71,94 +103,119 @@ if [[ "${DO_REBUILD}" == true ]]; then
     fi
 fi
 
-# --- Continue with normal checks and execution ---
-
-# 1. Check for Go command
-if ! command -v go &> /dev/null; then
-    print_wrapper_error "Go command not found in PATH."
-    echo -e "${CLR_CYN}  Please install Go (version 1.18 or newer recommended) from:${CLR_RST}"
-    echo -e "${CLR_YLW}    https://golang.org/dl/${CLR_RST}"
-    echo -e "${CLR_CYN}  Ensure the Go binary directory (usually /usr/local/go/bin or similar) is added to your system PATH.${CLR_RST}"
-    exit 1
-fi
-# 1b. Verify Go command works
-if ! go version &> /dev/null; then
-     print_wrapper_error "'go' command was found, but 'go version' failed to execute."
-     echo -e "${CLR_CYN}  This might indicate a corrupted Go installation or PATH issues.${CLR_RST}"
-     echo -e "${CLR_CYN}  Please ensure Go is correctly installed and accessible.${CLR_RST}"
-     echo -e "${CLR_YLW}  Download: https://golang.org/dl/${CLR_RST}"
-     exit 1
-fi
-echo "[u7 Wrapper] Found functional Go command." # Removed color
-
-# 2. Check if u7go directory exists
-if [ ! -d "${GO_APP_DIR}" ]; then
-    print_wrapper_error "Go application source directory not found: ${GO_APP_DIR}" # Matched wording
-    exit 1
+# 1. Check Go exists if any other command is run
+HAS_COMMAND=false
+if $DO_CLEAN || $DO_BUILD || $DO_RUN || $DO_HEALTHCHECK || $DO_CONFIGURE || $DO_SETUP || $DO_SCRIPTS; then
+    HAS_COMMAND=true
 fi
 
-# 3. Check if u7go binary exists inside u7go/, build if not
-if [ ! -f "${GO_BINARY_EXE_PATH}" ]; then
-    echo "[u7 Wrapper] Go application binary '${GO_APP_NAME}' not found. Building..." # Removed color, matched wording
-    # Store current dir and cd, then restore
-    ORIGINAL_DIR=$(pwd)
-    echo "[u7 Wrapper] Changing directory to: ${GO_APP_DIR}" # Removed color
-    cd "${GO_APP_DIR}" || exit 1 # Exit if cd fails
-    
-    # Run go mod tidy first to ensure dependencies are present
-    echo "[u7 Wrapper] Running go mod tidy..." # Removed color
-    if ! go mod tidy; then
-        print_wrapper_error "'go mod tidy' failed in ${GO_APP_DIR}." # Matched wording
-        cd "${ORIGINAL_DIR}"
+if $HAS_COMMAND; then
+    if ! command -v go &> /dev/null; then
+        print_wrapper_error "Go command not found in PATH."
+        echo -e "${CLR_CYN}  Please install Go (version 1.18 or newer recommended) from:${CLR_RST}"
+        echo -e "${CLR_YLW}    https://golang.org/dl/${CLR_RST}"
+        echo -e "${CLR_CYN}  Ensure the Go binary directory is added to your system PATH.${CLR_RST}"
         exit 1
     fi
-
-    # Build the application inside the current directory (u7go)
-    LOCAL_OUTPUT_NAME="${GO_APP_NAME}" # Output name within the current (u7go) dir
-    echo "[u7 Wrapper] Running go build... (Output: ${LOCAL_OUTPUT_NAME})" # Removed color, matched wording
-    rm -f "./${LOCAL_OUTPUT_NAME}" # Clear any old binary first
-    go build -o "${LOCAL_OUTPUT_NAME}" .
-    BUILD_EXIT_CODE=$?
-    # echo "[u7 Wrapper] 'go build' exited with code: ${BUILD_EXIT_CODE}" # Removed this debug-like line
-    
-    # Check if build succeeded and created the file in the current dir
-    if [ ${BUILD_EXIT_CODE} -ne 0 ] || [ ! -f "./${LOCAL_OUTPUT_NAME}" ]; then
-        print_wrapper_error "'go build' failed to create ${LOCAL_OUTPUT_NAME} in ${GO_APP_DIR} (Exit Code: ${BUILD_EXIT_CODE})." # Matched wording
-        # echo -e "${CLR_YLW}[u7 Wrapper] Contents of build directory (${GO_APP_DIR}):${CLR_RST}" # Removed ls
-        # ls -la
-        cd "${ORIGINAL_DIR}"
+    if ! go version &> /dev/null; then
+        print_wrapper_error "'go' command was found, but 'go version' failed to execute."
+        echo -e "${CLR_CYN}  Check Go installation and PATH.${CLR_RST}"
+        echo -e "${CLR_YLW}  Download: https://golang.org/dl/${CLR_RST}"
         exit 1
     fi
-
-    # Check the final expected path implicitly by the next section
-    # echo "[u7 Wrapper] Checking final binary path: ${GO_BINARY_EXE_PATH}" 
-    # ls -ld "${GO_BINARY_EXE_PATH}" 
-    # if [ -f "${GO_BINARY_EXE_PATH}" ]; then
-    #     echo -e "${CLR_GRN}[u7 Wrapper] Target binary successfully created.${CLR_RST}"
-    # else
-    #     print_wrapper_error "Target binary check failed after build. Something is wrong at ${GO_BINARY_EXE_PATH}."
-    #     cd "${ORIGINAL_DIR}"
-    #     exit 1
-    # fi
-        
-    echo -e "${CLR_GRN}[u7 Wrapper] Go application built successfully.${CLR_RST}" # Keep green for success
-    cd "${ORIGINAL_DIR}"
+    # Check if binary exists, build if missing (initial build)
+    if [ ! -f "${GO_BINARY_EXE_PATH}" ]; then
+         echo -e "${CLR_YLW}[u7 Wrapper] Go application '${GO_APP_NAME}' not found. Performing initial build...${CLR_RST}"
+         ORIGINAL_DIR=$(pwd)
+         cd "${GO_APP_DIR}" || exit 1
+         echo "[u7 Wrapper] Running go mod tidy..."
+         if ! go mod tidy; then print_wrapper_error "Initial 'go mod tidy' failed."; cd "${ORIGINAL_DIR}"; exit 1; fi
+         echo "[u7 Wrapper] Running go build..."
+         if ! go build -o "${GO_APP_NAME}" .; then print_wrapper_error "Initial 'go build' failed."; cd "${ORIGINAL_DIR}"; exit 1; fi
+         echo -e "${CLR_GRN}[u7 Wrapper] Initial build successful.${CLR_RST}"
+         cd "${ORIGINAL_DIR}"
+    fi
 fi
 
-# 4. Execute the Go application from its location inside u7go/, passing all arguments
-echo "[u7 Wrapper] Preparing to execute: ${GO_BINARY_EXE_PATH} ${*} " # Removed color, simplified args display
-echo "[u7 Wrapper] --- Executing Go application ---" # Removed color, matched wording
-
-echo # Add a newline for cleaner separation
-"${GO_BINARY_EXE_PATH}" "$@" # Execute using the path inside u7go/
-GO_EXIT_CODE=$?
-
-# Check exit code and provide wrapper message on failure
-if [ ${GO_EXIT_CODE} -ne 0 ]; then
-    print_wrapper_error "Go application exited with error code: ${GO_EXIT_CODE}."
+# 2. Prepare Base u7go Command Args
+declare -a U7GO_ARGS=()
+U7GO_ARGS+=("--buildtype=${BUILD_TYPE}")
+if [[ "$SHOW_WARNINGS" == true ]]; then
+    U7GO_ARGS+=("--warnings")
 fi
 
-exit ${GO_EXIT_CODE} # Exit with the exit code of the Go application
+# --- Execute Actions Sequentially ---
+LAST_EXIT_CODE=0
 
-# --- Original script commented out below (for reference if needed) ---
-# ... (original content of u7 script would go here, commented out) ... 
+# Execute Setup (Exclusive Action)
+if [[ "$DO_SETUP" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Setup ---"
+    "${GO_BINARY_EXE_PATH}" setup "${U7GO_ARGS[@]}" # Pass flags if setup ever needs them
+    LAST_EXIT_CODE=$?
+    if [ $LAST_EXIT_CODE -ne 0 ]; then print_wrapper_error "Setup command failed (Code: $LAST_EXIT_CODE)"; exit $LAST_EXIT_CODE; fi
+    exit $LAST_EXIT_CODE # Setup is typically run alone
+fi
+
+# Execute Scripts (Currently Exclusive Action)
+if [[ "$DO_SCRIPTS" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Scripts ---"
+    declare -a SCRIPT_FLAGS=()
+    if [[ "$FIX_REQUIRES" == true ]]; then SCRIPT_FLAGS+=("--fix-requires"); fi
+    # Add other script flags here
+    "${GO_BINARY_EXE_PATH}" scripts "${SCRIPT_FLAGS[@]}" "${U7GO_ARGS[@]}" # Pass flags if scripts needs them
+    LAST_EXIT_CODE=$?
+    if [ $LAST_EXIT_CODE -ne 0 ]; then print_wrapper_error "Scripts command failed (Code: $LAST_EXIT_CODE)"; exit $LAST_EXIT_CODE; fi
+    exit $LAST_EXIT_CODE # Scripts are typically run alone
+fi
+
+# Execute Configure
+if [[ "$DO_CONFIGURE" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Configure (${BUILD_TYPE}) ---"
+    "${GO_BINARY_EXE_PATH}" configure "${U7GO_ARGS[@]}"
+    LAST_EXIT_CODE=$?
+    if [ $LAST_EXIT_CODE -ne 0 ]; then print_wrapper_error "Configure command failed (Code: $LAST_EXIT_CODE)"; exit $LAST_EXIT_CODE; fi
+fi
+
+# Execute Clean
+if [[ "$DO_CLEAN" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Clean (${BUILD_TYPE}) ---"
+    "${GO_BINARY_EXE_PATH}" clean "${U7GO_ARGS[@]}"
+    LAST_EXIT_CODE=$?
+    if [ $LAST_EXIT_CODE -ne 0 ]; then print_wrapper_error "Clean command failed (Code: $LAST_EXIT_CODE)"; exit $LAST_EXIT_CODE; fi
+fi
+
+# Execute Build
+if [[ "$DO_BUILD" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Build (${BUILD_TYPE}) ---"
+    "${GO_BINARY_EXE_PATH}" build "${U7GO_ARGS[@]}"
+    LAST_EXIT_CODE=$?
+    if [ $LAST_EXIT_CODE -ne 0 ]; then print_wrapper_error "Build command failed (Code: $LAST_EXIT_CODE)"; exit $LAST_EXIT_CODE; fi
+fi
+
+# Execute Run or Healthcheck (Mutually Exclusive)
+if [[ "$DO_RUN" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Run (${BUILD_TYPE}) ---"
+    # Run requires build type flag, but game args come after --
+    runArgs=("${U7GO_ARGS[@]}")
+    if [ ${#GAME_ARGS[@]} -gt 0 ]; then
+        runArgs+=("--")
+        runArgs+=("${GAME_ARGS[@]}")
+    fi
+    "${GO_BINARY_EXE_PATH}" run "${runArgs[@]}"
+    LAST_EXIT_CODE=$?
+    # Error message printed by Go app itself
+elif [[ "$DO_HEALTHCHECK" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Healthcheck ---"
+    "${GO_BINARY_EXE_PATH}" healthcheck # Healthcheck forces debug internally, flags not needed here
+    LAST_EXIT_CODE=$?
+    # Error message printed by Go app itself
+fi
+
+# Handle case where only flags were given (or no recognized command)
+if ! $HAS_COMMAND && ! $DO_UPDATE ; then
+    echo "[u7 Wrapper] No specific command given, executing u7go with flags..."
+    "${GO_BINARY_EXE_PATH}" "${U7GO_ARGS[@]}" "$@" # Pass original args too
+    LAST_EXIT_CODE=$?
+fi
+
+exit $LAST_EXIT_CODE 
