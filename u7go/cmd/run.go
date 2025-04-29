@@ -50,7 +50,6 @@ and runs it from there. Arguments after '--' are passed directly to the game exe
 		// Let's adjust the source path assuming no 'install' step for now, just direct build output.
 		// If using 'meson install', this path needs updating.
 		// For now, assume it's directly in build-xxx/
-		srcExePath = filepath.Join(projectRoot, buildDirName, srcExeName)
 		color.Yellow("Looking for source executable at: %s", srcExePath) // Debug output
 
 		// Redist directory and target executable path
