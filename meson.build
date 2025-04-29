@@ -196,6 +196,9 @@ u7_exe = executable('U7Revisited' + output_suffix,
   sources,
   dependencies: dependencies,
   include_directories: include_directories,
+  # install: true combined with install_dir: 'bin' places the executable
+  # into 'build-<type>/install_prefix/bin/' within the build directory.
+  # Helper scripts (copy_executable, run_u7) rely on this path.
   install: true,  # Use Meson's built-in install
   install_dir: 'bin' # Install executable into 'bin' subdir
 )

@@ -1,7 +1,7 @@
 #!/bin/bash
-# Main wrapper script for U7Revisited development tasks
+# Wrapper script: Checks for Go, builds u7go if needed, then executes u7go.
 
-# --- Colors ---
+# --- Colors (Keep for wrapper messages) ---
 CLR_RST="\e[0m" # Reset
 CLR_RED="\e[31m" # Error
 CLR_GRN="\e[32m" # Success
@@ -10,420 +10,212 @@ CLR_BLU="\e[34m" # Info / Headers
 CLR_CYN="\e[36m" # Info / Prompt
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-SCRIPTS_SUBDIR="scripts" # Directory where other scripts reside
+GO_APP_DIR="${SCRIPT_DIR}/u7go"
+GO_APP_NAME="u7go"
+# Path where the binary will be BUILT and EXECUTED (inside the go app dir)
+GO_BINARY_EXE_PATH="${GO_APP_DIR}/${GO_APP_NAME}"
 
-# --- Helper Functions ---
-print_header() {
-    echo ""
-    echo -e "${CLR_BLU}==================================================${CLR_RST}"
-    printf "  ${CLR_BLU}U7Revisited Task: %s${CLR_RST}\n" "$1"
-    echo -e "${CLR_BLU}==================================================${CLR_RST}"
+# --- Helper for error messages ---
+print_wrapper_error() {
+    echo -e "${CLR_RED}[u7 Wrapper ERROR] $1${CLR_RST}" >&2
 }
 
-print_footer() {
-    echo -e "${CLR_BLU}==================================================${CLR_RST}"
-    echo -e "  ${CLR_GRN}Task Finished${CLR_RST}"
-    echo -e "${CLR_BLU}==================================================${CLR_RST}"
-    echo ""
-}
-
-print_error() {
-    echo -e "${CLR_RED}[U7 ERROR] $1${CLR_RST}" >&2
-}
-
-# Simple spinner function
-spinner() {
-    local pid=$1
-    local delay=0.1
-    local spinstr='|/-\'
-    # Hide cursor
-    tput civis
-    # Ensure cleanup on exit/interrupt
-    trap 'tput cnorm; exit' INT TERM EXIT
-
-    while ps -p $pid > /dev/null; do
-        local temp=${spinstr#?}
-        # Use \r to return to beginning of line and overwrite
-        printf "\r${CLR_BLU}[U7Revisited] Working.. [%c]${CLR_RST}" "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-    done
-    # Clear the spinner line after loop finishes
-    # Get terminal width or default to 80, print spaces, then return cursor
-    printf "\r%-${COLUMNS:-80}s\r" ""
-    # Restore cursor
-    tput cnorm
-    # Remove the trap
-    trap - INT TERM EXIT
-}
-
-# --- Check for scripts directory ---
-SCRIPTS_DIR="${SCRIPT_DIR}/${SCRIPTS_SUBDIR}"
-if [ ! -d "${SCRIPTS_DIR}" ]; then
-    print_error "Scripts directory '${SCRIPTS_DIR}' not found!"
-    exit 1
-fi
-
-# --- Default values ---
-BUILD_TYPE="release" # Default to release
-BUILD_ARGS=()
-RUN_EXTRA_ARGS=()
-DO_BUILD=false
+# --- Default Settings & Action Flags ---
+BUILD_TYPE="release" # Default build type
+SHOW_WARNINGS=false
 DO_CLEAN=false
-DO_CONFIGURE=false
+DO_BUILD=false
 DO_RUN=false
-DO_SETUP_IDE=false
-DO_FIX_REQUIRES=false # New flag
-DO_HEALTHCHECK=false # New flag for healthcheck command
-SHOW_WARNINGS=false # New flag for build output verbosity
+DO_HEALTHCHECK=false
+DO_CONFIGURE=false
+DO_SETUP=false
+DO_SCRIPTS=false
+DO_UPDATE=false
+FIX_REQUIRES=false # Specific script flag
+declare -a GAME_ARGS=() # Array for arguments after --
 
-# --- Argument Parsing --- Allow flexible order ---
-COMMAND_GIVEN=false
-RUN_ARGS_STARTED=false
-while [[ $# -gt 0 ]]; do
-    # Stop processing options if we hit the game args separator or if run command was last
-    if [[ "$1" == "--" && "$RUN_ARGS_STARTED" == false ]]; then
-        RUN_ARGS_STARTED=true
-        shift # Consume the '--'
-        RUN_EXTRA_ARGS+=("$@") # Add all remaining args to game args
-        break # Stop processing command-line args
-    fi
-    if [[ "$RUN_ARGS_STARTED" == true ]]; then
-        RUN_EXTRA_ARGS+=("$1") # Add to game args if already started
-        shift
+# --- Argument Parsing ---
+PASS_THROUGH_ARGS=false
+for arg in "$@"; do
+    if [[ "$PASS_THROUGH_ARGS" == true ]]; then
+        GAME_ARGS+=("$arg")
         continue
     fi
 
-    ARG_PROCESSED=false
-    case "$1" in
-        build)
-            DO_BUILD=true
-            COMMAND_GIVEN=true
-            ARG_PROCESSED=true
-            ;;
-        run) # Run still consumes remaining args
-            DO_RUN=true
-            COMMAND_GIVEN=true
-            ARG_PROCESSED=true
-            RUN_ARGS_STARTED=true # Mark that subsequent args are for the game
-            ;;
-        clean)
-            DO_CLEAN=true
-            COMMAND_GIVEN=true
-            ARG_PROCESSED=true
-            ;;
-        configure)
-             DO_CONFIGURE=true
-             COMMAND_GIVEN=true
-             ARG_PROCESSED=true
-            ;;
-        setup)
-            DO_SETUP_IDE=true
-            COMMAND_GIVEN=true
-            ARG_PROCESSED=true
-            ;;
-        healthcheck)
-            DO_HEALTHCHECK=true
-            COMMAND_GIVEN=true
-            ARG_PROCESSED=true
-            BUILD_TYPE="debug" # Healthcheck implies debug
-            ;;
-        scripts) # Scripts command needs the next argument
-            COMMAND_GIVEN=true
-            ARG_PROCESSED=true
-            shift # Consume 'scripts'
-            if [[ "$1" == "--fix-requires" ]]; then
-                 DO_FIX_REQUIRES=true
-                 # Shift will happen at end of loop
+    case "$arg" in
+        clean) DO_CLEAN=true ;;
+        build) DO_BUILD=true ;;
+        rebuild) DO_CLEAN=true; DO_BUILD=true ;; # Add rebuild alias
+        run) DO_RUN=true ;;
+        healthcheck) DO_HEALTHCHECK=true ;;
+        configure) DO_CONFIGURE=true ;;
+        setup) DO_SETUP=true ;;
+        scripts) DO_SCRIPTS=true ;;
+        update) DO_UPDATE=true ;;
+        debug|--debug) BUILD_TYPE="debug" ;;
+        release|--release) BUILD_TYPE="release" ;; # Allow explicit release
+        warnings|--warnings) SHOW_WARNINGS=true ;;
+        --fix-requires) FIX_REQUIRES=true ;; # Capture script flag
+        --) PASS_THROUGH_ARGS=true ;; # Start passing args to game
+        *)            
+            # Assume unknown args before -- might be game args if run is specified
+            # Or potentially flags for u7go itself? For now, add to game args if run requested.
+            if [[ "$DO_RUN" == true ]]; then
+                GAME_ARGS+=("$arg")
             else
-                 print_error "Unknown scripts command: '$1'. Available: --fix-requires"
-                 exit 1
+                 # Could be an error, or a flag for a command like configure/build?
+                 # For now, let u7go handle unknown flags/args later if no action matched.
+                 # Or print a warning? Let's just pass it along.
+                 # GAME_ARGS+=("$arg") # Re-enable if we want to pass all unknown args
+                 :
             fi
-            ;;
-        --debug)
-            BUILD_TYPE="debug"
-            ARG_PROCESSED=true
-            ;;
-        debug) # Alias for --debug
-            BUILD_TYPE="debug"
-            ARG_PROCESSED=true
-            ;;
-        --release)
-            BUILD_TYPE="release"
-            ARG_PROCESSED=true
-            ;;
-        release) # Alias for --release
-            BUILD_TYPE="release"
-            ARG_PROCESSED=true
-            ;;
-        --warnings)
-            SHOW_WARNINGS=true
-            ARG_PROCESSED=true
-            ;;
-        warnings) # Alias for --warnings
-            SHOW_WARNINGS=true
-            ARG_PROCESSED=true
-            ;;
-        -h|--help)
-            echo "Usage: $0 [command...] [options...] [-- game_args...]"
-            echo ""
-            echo "Commands:"
-            echo "  build           Build the project (default: release)."
-            echo "  run             Run the project (builds first if needed, default: release)."
-            echo "  clean           Clean the build directory for the selected type."
-            echo "  configure       Force configure before build."
-            echo "  setup           Run the IDE setup script (Linux/macOS)."
-            echo "  healthcheck     Run the asset loading health check (implies --debug)."
-            echo "  scripts         Run utility scripts:"
-            echo "    --fix-requires  Check and add missing 'require \"U7LuaFuncs\"' to Lua scripts."
-            echo ""
-            echo "Options:"
-            echo "  --debug         Perform actions for the debug build type."
-            echo "  --release       Perform actions for the release build type (default)."
-            echo "  --warnings      Show compiler warnings in the build summary (default: errors only)."
-            echo "  -h, --help      Show this help message."
-            echo ""
-            echo "Examples:"
-            echo "  $0 build                # Build release (default)"
-            echo "  $0 build --debug        # Build debug"
-            echo "  $0 run                  # Build (if needed) and run release"
-            echo "  $0 clean build --debug   # Clean debug, then build debug"
-            echo "  $0 run -- --some-game-flag # Run release, passing flag to game"
-            echo "  $0 setup                # Generate IDE config files (Linux/macOS)"
-            echo "  $0 scripts --fix-requires # Check/fix Lua scripts"
-            echo "  $0 build --warnings     # Build release, show warnings in summary"
-            exit 0
-            ;;
-        *) # Unrecognized argument
-            # If run command was just processed, this is a game arg
-            if [[ "$RUN_ARGS_STARTED" == true ]]; then
-                 RUN_EXTRA_ARGS+=("$1")
-                 ARG_PROCESSED=true # Treat as processed run arg
-            else
-                 print_error "Unknown command or option: $1"
-                 exit 1
-            fi
-            ;;
+             ;;
     esac
-    shift # Move to the next argument
 done
 
-# --- Report Effective Settings --- START
-if [[ "$COMMAND_GIVEN" == true ]]; then # Only report if a command was actually given
-    echo -e "${CLR_CYN}--- Effective Settings ---${CLR_RST}"
-    printf "  Build Type:    %s\n" "$BUILD_TYPE"
-    printf "  Show Warnings: %s\n" "$SHOW_WARNINGS"
-    if [[ "$DO_CLEAN" == true ]]; then printf "  Clean Target:  true\n"; fi
-    if [[ "$DO_CONFIGURE" == true ]]; then printf "  Configure:     true\n"; fi
-    # Add other relevant flags here if needed
-    echo -e "${CLR_CYN}--------------------------${CLR_RST}"
-fi
-# --- Report Effective Settings --- END
+# --- Action Execution ---
 
-# --- Execute Tasks ---
+# 0. Handle Update First (Exclusive Action)
+if [[ "$DO_UPDATE" == true ]]; then
+    echo -e "${CLR_BLU}[u7 Wrapper] 'update' command detected: Rebuilding u7go...${CLR_RST}"
+    # --- Go Check within Update ---
+    if ! command -v go &> /dev/null; then print_wrapper_error "Cannot update: 'go' command not found in PATH."; exit 1; fi
+    if ! go version &> /dev/null; then print_wrapper_error "Cannot update: 'go version' failed. Check Go installation."; exit 1; fi
+    # --- End Go Check ---
+    if [ ! -d "${GO_APP_DIR}" ]; then print_wrapper_error "Cannot update: Go application directory not found: ${GO_APP_DIR}"; exit 1; fi
 
-# Setup IDE
-if [[ "$DO_SETUP_IDE" == true ]]; then
-    print_header "IDE Setup (Linux/macOS)"
-    SETUP_SCRIPT="${SCRIPTS_DIR}/setup_ide.sh"
-    if [ -f "$SETUP_SCRIPT" ]; then
-        # Use standard echo (adds newline) so spinner appears below
-        echo -e "${CLR_CYN}--> Running IDE setup script...${CLR_RST}"
-        # Run script in background
-        bash "$SETUP_SCRIPT" &
-        SETUP_PID=$!
-        # Start spinner
-        spinner $SETUP_PID
-        # Wait for script to finish and get exit code
-        wait $SETUP_PID
-        SETUP_EXIT_CODE=$?
-
-        if [ ${SETUP_EXIT_CODE} -ne 0 ]; then
-             print_error "IDE setup script failed with exit code ${SETUP_EXIT_CODE}."
-             exit 1
-        fi
-        print_footer
+    ORIGINAL_DIR=$(pwd)
+    echo "[u7 Wrapper] Changing directory to: ${GO_APP_DIR}"
+    cd "${GO_APP_DIR}" || exit 1
+    echo "[u7 Wrapper] Running go mod tidy..."
+    if ! go mod tidy; then print_wrapper_error "'go mod tidy' failed during update in ${GO_APP_DIR}."; cd "${ORIGINAL_DIR}"; exit 1; fi
+    echo "[u7 Wrapper] Running go build -o \"${GO_APP_NAME}\" ."
+    rm -f "./${GO_APP_NAME}"
+    if go build -o "${GO_APP_NAME}" .; then
+        echo -e "${CLR_GRN}[u7 Wrapper] u7go update successful: ${GO_BINARY_EXE_PATH}${CLR_RST}"
+        ls -l "${GO_BINARY_EXE_PATH}"
+        cd "${ORIGINAL_DIR}"
+        exit 0
     else
-        print_error "Setup script not found: ${SETUP_SCRIPT}"
+        print_wrapper_error "u7go update failed during build in ${GO_APP_DIR}."
+        cd "${ORIGINAL_DIR}"
         exit 1
     fi
 fi
 
-# Fix Lua Requires Script
-if [[ "$DO_FIX_REQUIRES" == true ]]; then
-    print_header "Fix Lua Requires"
-    FIX_SCRIPT="${SCRIPTS_DIR}/check_lua_requires.sh"
-    if [ -f "$FIX_SCRIPT" ]; then
-        echo "--> Running Lua require check script..."
-        bash "$FIX_SCRIPT" # Execute the script
-        FIX_EXIT_CODE=$?
-        # Exit code 2 from check_lua_requires.sh means user chose to restore backups
-        if [ ${FIX_EXIT_CODE} -ne 0 ] && [ ${FIX_EXIT_CODE} -ne 2 ]; then
-             print_error "Lua require check script failed with exit code ${FIX_EXIT_CODE}."
-             # Don't exit here if the user restored (exit code 2), just report
-             if [ ${FIX_EXIT_CODE} -ne 2 ]; then exit 1; fi
-        elif [ ${FIX_EXIT_CODE} -eq 2 ]; then
-             echo "[U7 INFO] Changes were restored from backup by user request."
-        fi
-        print_footer
-    else
-        print_error "Lua require check script not found: ${FIX_SCRIPT}"
+# 1. Check Go exists if any other command is run
+HAS_COMMAND=false
+if $DO_CLEAN || $DO_BUILD || $DO_RUN || $DO_HEALTHCHECK || $DO_CONFIGURE || $DO_SETUP || $DO_SCRIPTS; then
+    HAS_COMMAND=true
+fi
+
+if $HAS_COMMAND; then
+    if ! command -v go &> /dev/null; then
+        print_wrapper_error "Go command not found in PATH."
+        echo -e "${CLR_CYN}  Please install Go (version 1.18 or newer recommended) from:${CLR_RST}"
+        echo -e "${CLR_YLW}    https://golang.org/dl/${CLR_RST}"
+        echo -e "${CLR_CYN}  Ensure the Go binary directory is added to your system PATH.${CLR_RST}"
         exit 1
+    fi
+    if ! go version &> /dev/null; then
+        print_wrapper_error "'go' command was found, but 'go version' failed to execute."
+        echo -e "${CLR_CYN}  Check Go installation and PATH.${CLR_RST}"
+        echo -e "${CLR_YLW}  Download: https://golang.org/dl/${CLR_RST}"
+        exit 1
+    fi
+    # Check if binary exists, build if missing (initial build)
+    if [ ! -f "${GO_BINARY_EXE_PATH}" ]; then
+         echo -e "${CLR_YLW}[u7 Wrapper] Go application '${GO_APP_NAME}' not found. Performing initial build...${CLR_RST}"
+         ORIGINAL_DIR=$(pwd)
+         cd "${GO_APP_DIR}" || exit 1
+         echo "[u7 Wrapper] Running go mod tidy..."
+         if ! go mod tidy; then print_wrapper_error "Initial 'go mod tidy' failed."; cd "${ORIGINAL_DIR}"; exit 1; fi
+         echo "[u7 Wrapper] Running go build..."
+         if ! go build -o "${GO_APP_NAME}" .; then print_wrapper_error "Initial 'go build' failed."; cd "${ORIGINAL_DIR}"; exit 1; fi
+         echo -e "${CLR_GRN}[u7 Wrapper] Initial build successful.${CLR_RST}"
+         cd "${ORIGINAL_DIR}"
     fi
 fi
 
-# Handle build dependencies (clean, configure)
-if [[ "$DO_CLEAN" == true ]]; then
-    BUILD_ARGS+=("--clean")
+# 2. Prepare Base u7go Command Args
+declare -a U7GO_ARGS=()
+U7GO_ARGS+=("--buildtype=${BUILD_TYPE}")
+if [[ "$SHOW_WARNINGS" == true ]]; then
+    U7GO_ARGS+=("--warnings")
 fi
+
+# --- Execute Actions Sequentially ---
+LAST_EXIT_CODE=0
+
+# Execute Setup (Exclusive Action)
+if [[ "$DO_SETUP" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Setup ---"
+    "${GO_BINARY_EXE_PATH}" setup "${U7GO_ARGS[@]}" # Pass flags if setup ever needs them
+    LAST_EXIT_CODE=$?
+    if [ $LAST_EXIT_CODE -ne 0 ]; then print_wrapper_error "Setup command failed (Code: $LAST_EXIT_CODE)"; exit $LAST_EXIT_CODE; fi
+    exit $LAST_EXIT_CODE # Setup is typically run alone
+fi
+
+# Execute Scripts (Currently Exclusive Action)
+if [[ "$DO_SCRIPTS" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Scripts ---"
+    declare -a SCRIPT_FLAGS=()
+    if [[ "$FIX_REQUIRES" == true ]]; then SCRIPT_FLAGS+=("--fix-requires"); fi
+    # Add other script flags here
+    "${GO_BINARY_EXE_PATH}" scripts "${SCRIPT_FLAGS[@]}" "${U7GO_ARGS[@]}" # Pass flags if scripts needs them
+    LAST_EXIT_CODE=$?
+    if [ $LAST_EXIT_CODE -ne 0 ]; then print_wrapper_error "Scripts command failed (Code: $LAST_EXIT_CODE)"; exit $LAST_EXIT_CODE; fi
+    exit $LAST_EXIT_CODE # Scripts are typically run alone
+fi
+
+# Execute Configure
 if [[ "$DO_CONFIGURE" == true ]]; then
-     BUILD_ARGS+=("--configure")
+    echo "[u7 Wrapper] --- Executing Configure (${BUILD_TYPE}) ---"
+    "${GO_BINARY_EXE_PATH}" configure "${U7GO_ARGS[@]}"
+    LAST_EXIT_CODE=$?
+    if [ $LAST_EXIT_CODE -ne 0 ]; then print_wrapper_error "Configure command failed (Code: $LAST_EXIT_CODE)"; exit $LAST_EXIT_CODE; fi
 fi
 
-# Add --release flag specifically for build.sh if needed
-if [[ "$BUILD_TYPE" == "release" ]]; then
-     BUILD_ARGS+=("--release")
+# Execute Clean
+if [[ "$DO_CLEAN" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Clean (${BUILD_TYPE}) ---"
+    "${GO_BINARY_EXE_PATH}" clean "${U7GO_ARGS[@]}"
+    LAST_EXIT_CODE=$?
+    if [ $LAST_EXIT_CODE -ne 0 ]; then print_wrapper_error "Clean command failed (Code: $LAST_EXIT_CODE)"; exit $LAST_EXIT_CODE; fi
 fi
 
-# Build (if build cmd, run cmd, or healthcheck cmd was specified, and not only setup/scripts)
-BUILD_NEEDED=$( [[ "$DO_BUILD" == true || "$DO_RUN" == true || "$DO_HEALTHCHECK" == true ]] && echo true || echo false )
-BUILD_SCRIPT="${SCRIPTS_DIR}/build.sh"
+# Execute Build
+if [[ "$DO_BUILD" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Build (${BUILD_TYPE}) ---"
+    "${GO_BINARY_EXE_PATH}" build "${U7GO_ARGS[@]}"
+    LAST_EXIT_CODE=$?
+    if [ $LAST_EXIT_CODE -ne 0 ]; then print_wrapper_error "Build command failed (Code: $LAST_EXIT_CODE)"; exit $LAST_EXIT_CODE; fi
+fi
 
-# Determine if ONLY setup or fix-requires was specified
-ONLY_NON_BUILD_COMMAND=$( [[ ( "$DO_SETUP_IDE" == true || "$DO_FIX_REQUIRES" == true ) && \
-                             "$DO_BUILD" == false && \
-                             "$DO_CLEAN" == false && \
-                             "$DO_CONFIGURE" == false && \
-                             "$DO_RUN" == false && \
-                             "$DO_HEALTHCHECK" == false ]] && echo true || echo false )
-
-# Only run build if build/run/healthcheck was requested AND it wasn't the case that ONLY setup/fix-requires was specified.
-if [[ "$BUILD_NEEDED" == true && "$ONLY_NON_BUILD_COMMAND" == false ]]; then
-
-    # The --release flag is added above if needed. build.sh defaults to debug if it's absent.
-
-    print_header "Build ($BUILD_TYPE)"
-    if [ -f "$BUILD_SCRIPT" ]; then
-        # Use standard echo (adds newline) so spinner appears below
-        echo -e "${CLR_CYN}--> Running build script: ${BUILD_SCRIPT} ${BUILD_ARGS[@]}${CLR_RST}"
-
-        # --- MODIFIED BUILD EXECUTION --- START
-
-        BUILD_OUTPUT_FILE=$(mktemp)
-        trap 'rm -f "$BUILD_OUTPUT_FILE"; tput cnorm; echo "Build interrupted."; exit' INT TERM EXIT
-
-        # Run build script in background, redirecting output to temp file
-        bash "$BUILD_SCRIPT" ${BUILD_ARGS[@]} > "$BUILD_OUTPUT_FILE" 2>&1 &
-        BUILD_PID=$!
-        spinner $BUILD_PID # Show spinner
-        wait $BUILD_PID # Wait for build to finish
-        BUILD_EXIT_CODE=$?
-        trap - INT TERM EXIT # Remove trap before processing output
-
-        # Define specific grep patterns for errors and warnings
-        ERROR_PATTERN=': error:| fatal error:| error |ERROR:|FAIL:|Fail:'
-        WARNING_PATTERN=': warning:| warning |WARN:|WARN |\[-W.*\]$'
-
-        # Determine combined grep pattern for summary based on --warnings flag
-        SUMMARY_GREP_PATTERN=$ERROR_PATTERN
-        if [[ "$SHOW_WARNINGS" == true ]]; then
-             SUMMARY_GREP_PATTERN="$ERROR_PATTERN|$WARNING_PATTERN"
-        fi
-
-        # Show summary header
-        echo -e "${CLR_BLU}--- Build Output Summary ---${CLR_RST}"
-
-        # Run grep for summary
-        if grep -q -E "$SUMMARY_GREP_PATTERN" "$BUILD_OUTPUT_FILE"; then
-             grep --color=always -E "$SUMMARY_GREP_PATTERN" "$BUILD_OUTPUT_FILE"
-        else
-             echo -e "${CLR_GRN}  No relevant messages found in build log.${CLR_RST}"
-        fi
-        echo -e "${CLR_BLU}--------------------------${CLR_RST}"
-
-        # --- Count Total Errors and Warnings --- START
-        TOTAL_ERRORS=$(grep -c -E "$ERROR_PATTERN" "$BUILD_OUTPUT_FILE")
-        TOTAL_WARNINGS=$(grep -c -E "$WARNING_PATTERN" "$BUILD_OUTPUT_FILE")
-
-        printf "${CLR_BLU}Build Totals:${CLR_RST} "
-        printf "${CLR_RED}%d Errors${CLR_RST}, " "$TOTAL_ERRORS"
-        printf "${CLR_YLW}%d Warnings${CLR_RST}\n" "$TOTAL_WARNINGS"
-        # --- Count Total Errors and Warnings --- END
-
-        # --- Add informational message about hidden warnings --- START
-        if [[ ${BUILD_EXIT_CODE} -eq 0 && ${TOTAL_WARNINGS} -gt 0 && "$SHOW_WARNINGS" == false ]]; then
-             echo -e "${CLR_CYN}[U7 INFO] Build succeeded, but warnings were detected. Re-run with --warnings to see details.${CLR_RST}"
-        fi
-        # --- Add informational message about hidden warnings --- END
-
-        # Always report if the build command itself failed
-        if [ ${BUILD_EXIT_CODE} -ne 0 ]; then
-             print_error "Build script failed with exit code ${BUILD_EXIT_CODE}. (See full log above if summary is filtered)"
-             # Optionally show full log here again if needed, even if filtered?
-             # echo -e "${CLR_YLW}--- Full Log ---${CLR_RST}"
-             # cat "$BUILD_OUTPUT_FILE"
-             rm -f "$BUILD_OUTPUT_FILE" # Clean up
-             exit 1 # Exit with failure code
-        fi
-
-        # Clean up the temporary file if build succeeded
-        rm -f "$BUILD_OUTPUT_FILE"
-
-        # --- MODIFIED BUILD EXECUTION --- END
-
-        print_footer
-    else
-        print_error "Build script not found: ${BUILD_SCRIPT}"
-        exit 1
+# Execute Run or Healthcheck (Mutually Exclusive)
+if [[ "$DO_RUN" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Run (${BUILD_TYPE}) ---"
+    # Run requires build type flag, but game args come after --
+    runArgs=("${U7GO_ARGS[@]}")
+    if [ ${#GAME_ARGS[@]} -gt 0 ]; then
+        runArgs+=("--")
+        runArgs+=("${GAME_ARGS[@]}")
     fi
+    "${GO_BINARY_EXE_PATH}" run "${runArgs[@]}"
+    LAST_EXIT_CODE=$?
+    # Error message printed by Go app itself
+elif [[ "$DO_HEALTHCHECK" == true ]]; then
+    echo "[u7 Wrapper] --- Executing Healthcheck ---"
+    "${GO_BINARY_EXE_PATH}" healthcheck # Healthcheck forces debug internally, flags not needed here
+    LAST_EXIT_CODE=$?
+    # Error message printed by Go app itself
 fi
 
-# Run / Healthcheck
-if [[ "$DO_RUN" == true || "$DO_HEALTHCHECK" == true ]]; then # Include healthcheck flag
-    # Determine Header
-    if [[ "$DO_HEALTHCHECK" == true ]]; then
-        print_header "Health Check"
-    else
-        print_header "Run ($BUILD_TYPE)"
-    fi
-
-    RUN_SCRIPT="${SCRIPTS_DIR}/run_u7.sh"
-    RUN_FLAGS=()
-
-    # Determine Run Flags
-    if [[ "$DO_HEALTHCHECK" == true ]]; then
-        RUN_FLAGS=(--debug --healthcheck) # Force flags for healthcheck
-        echo "--> Running health check..."
-    else
-        # Original logic for regular run
-        if [[ "$BUILD_TYPE" == "debug" ]]; then
-            RUN_FLAGS+=(--debug)
-        fi
-        # Append any extra arguments passed after '--'
-        if [ ${#RUN_EXTRA_ARGS[@]} -ne 0 ]; then
-            RUN_FLAGS+=("${RUN_EXTRA_ARGS[@]}")
-        fi
-        echo "--> Running execution script: $RUN_SCRIPT ${RUN_FLAGS[*]}"
-    fi
-
-    if [ -f "$RUN_SCRIPT" ]; then
-         bash "$RUN_SCRIPT" "${RUN_FLAGS[@]}"
-         RUN_EXIT_CODE=$?
-         # Only print non-zero exit for regular run, healthcheck handles its own messages
-         if [[ "$DO_HEALTHCHECK" == false && ${RUN_EXIT_CODE} -ne 0 ]]; then
-             echo -e "${CLR_YLW}[U7 INFO] Game process exited with code ${RUN_EXIT_CODE}.${CLR_RST}"
-         fi
-        print_footer
-    else
-         print_error "Run script not found: ${RUN_SCRIPT}"
-         exit 1
-    fi
+# Handle case where only flags were given (or no recognized command)
+if ! $HAS_COMMAND && ! $DO_UPDATE ; then
+    echo "[u7 Wrapper] No specific command given, executing u7go with flags..."
+    "${GO_BINARY_EXE_PATH}" "${U7GO_ARGS[@]}" "$@" # Pass original args too
+    LAST_EXIT_CODE=$?
 fi
 
-# If no command was given, show help implicitly.
-if [[ "$COMMAND_GIVEN" == false ]]; then
-    bash "$0" --help
-    exit 1 # Exit with error if no command specified
-fi
-
-exit 0 
+exit $LAST_EXIT_CODE 

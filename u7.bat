@@ -1,324 +1,213 @@
 @echo off
-REM Main wrapper script for U7Revisited development tasks (Windows)
 setlocal enabledelayedexpansion
 
+:: DEBUG - Set to 0 to disable debug output
+SET "DEBUG=1"
+
+:: Basic configuration
 SET "SCRIPT_DIR=%~dp0"
-REM Ensure SCRIPT_DIR ends with a backslash
-IF "%SCRIPT_DIR:~-1%" NEQ "\" SET "SCRIPT_DIR=%SCRIPT_DIR%\"
-SET "SCRIPTS_SUBDIR=scripts"
-SET "SCRIPTS_DIR=%SCRIPT_DIR%%SCRIPTS_SUBDIR%"
+SET "GO_APP_DIR=%SCRIPT_DIR%u7go"
+SET "GO_APP_NAME=u7go.exe"
+SET "GO_BINARY_EXE_PATH=%GO_APP_DIR%\%GO_APP_NAME%"
 
-REM --- Colors (Basic - might not work everywhere) ---
-REM Using 'echo' with escapes is unreliable. Use 'powershell' for better color.
-REM Fallback: No color.
-
-REM --- Helper Function (simulated) ---
-:print_header
-    echo.
-    echo ==================================================
-    echo   U7Revisited Task: %~1
-    echo ==================================================
-    GOTO :EOF
-
-:print_footer
-    echo ==================================================
-    echo   Task Finished
-    echo ==================================================
-    echo.
-    GOTO :EOF
-
-:print_error
-    echo [U7 ERROR] %~1 >&2
-    GOTO :EOF
-
-REM --- Check for scripts directory ---
-IF NOT EXIST "%SCRIPTS_DIR%\" (
-    call :print_error "Scripts directory '%SCRIPTS_DIR%' not found!"
-    exit /b 1
-)
-
-REM --- Default values ---
+:: Initialize all action flags
 SET "BUILD_TYPE=release"
-SET "BUILD_ARGS="
-SET "RUN_EXTRA_ARGS="
-SET "DO_BUILD=false"
-SET "DO_CLEAN=false"
-SET "DO_CONFIGURE=false"
-SET "DO_RUN=false"
-SET "DO_SETUP_IDE=false"
-SET "DO_HEALTHCHECK=false"
-SET "DO_FIX_REQUIRES=false"
-SET "SHOW_WARNINGS=false"
-SET "COMMAND_GIVEN=false"
-SET "RUN_ARGS_STARTED=false"
+SET "SHOW_WARNINGS=0"
+SET "DO_CLEAN=0"
+SET "DO_BUILD=0"
+SET "DO_RUN=0"
+SET "DO_HEALTHCHECK=0"
+SET "DO_CONFIGURE=0"
+SET "DO_SETUP=0"
+SET "DO_SCRIPTS=0"
+SET "DO_UPDATE=0"
+SET "FIX_REQUIRES=0"
+SET "GAME_ARGS_STR="
+SET "PASS_THROUGH=0"
 
-REM --- Argument Parsing (Simplified - order matters more than Linux) ---
-:ArgLoop
-IF "%~1"=="" GOTO ArgsDone
+:: Debug startup
+IF "%DEBUG%"=="1" (
+    echo [DEBUG] Script started with arguments: %*
+    echo [DEBUG] Working directory: %CD%
+)
 
-    IF "%RUN_ARGS_STARTED%"=="true" (
-        REM Collect remaining arguments for the game
-        SET RUN_EXTRA_ARGS=!RUN_EXTRA_ARGS! %1
-        SHIFT
-        GOTO ArgLoop
-    )
+:: Argument parsing
+:parse_args
+IF "%~1"=="" GOTO execute_actions
 
-    IF /I "%~1"=="build" (
-        SET "DO_BUILD=true"
-        SET "COMMAND_GIVEN=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="run" (
-        SET "DO_RUN=true"
-        SET "COMMAND_GIVEN=true"
-        SET "RUN_ARGS_STARTED=true" REM Start collecting game args
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="clean" (
-        SET "DO_CLEAN=true"
-        SET "COMMAND_GIVEN=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="configure" (
-        SET "DO_CONFIGURE=true"
-        SET "COMMAND_GIVEN=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="setup" (
-        SET "DO_SETUP_IDE=true"
-        SET "COMMAND_GIVEN=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="healthcheck" (
-        SET "DO_HEALTHCHECK=true"
-        SET "COMMAND_GIVEN=true"
-        SET "BUILD_TYPE=debug" REM Healthcheck implies debug
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="scripts" (
-        SET "COMMAND_GIVEN=true"
-        SHIFT
-        IF /I "%~1"=="--fix-requires" (
-            SET "DO_FIX_REQUIRES=true"
-        ) ELSE (
-            call :print_error "Unknown scripts command: %1. Available: --fix-requires"
-            exit /b 1
-        )
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="--debug" (
-        SET "BUILD_TYPE=debug"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="debug" (
-        SET "BUILD_TYPE=debug"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="--release" (
-        SET "BUILD_TYPE=release"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="release" (
-        SET "BUILD_TYPE=release"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="--warnings" (
-        SET "SHOW_WARNINGS=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="warnings" (
-        SET "SHOW_WARNINGS=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="-h" GOTO Help
-    IF /I "%~1"=="--help" GOTO Help
+IF "%DEBUG%"=="1" echo [DEBUG] Processing argument: "%~1"
 
-    REM Handle -- separator for game args
-    IF "%~1"=="--" (
-        SET "RUN_ARGS_STARTED=true"
-        SHIFT
-        GOTO ArgLoop
+:: Handle pass-through mode first
+IF "!PASS_THROUGH!"=="1" (
+    IF defined GAME_ARGS_STR (
+        SET "GAME_ARGS_STR=!GAME_ARGS_STR! %~1"
+    ) ELSE (
+        SET "GAME_ARGS_STR=%~1"
     )
-
-    call :print_error "Unknown command or option: %1"
-    exit /b 1
     SHIFT
-    GOTO ArgLoop
+    GOTO parse_args
+)
 
-:Help
-    echo Usage: %~nx0 [command...] [options...] [-- game_args...]
-    echo.
-    echo Commands:
-    echo   build           Build the project (default: release).
-    echo   run             Run the project (builds first if needed, default: release).
-    echo   clean           Clean the build directory for the selected type.
-    echo   configure       Force configure before build.
-    echo   setup           Run the IDE setup script (Windows).
-    echo   healthcheck     Run the asset loading health check (implies --debug).
-    echo   scripts         Run utility scripts:
-    echo     --fix-requires  Check/fix Lua requires (NOT YET IMPLEMENTED for Windows).
-    echo.
-    echo Options:
-    echo   --debug         Perform actions for the debug build type.
-    echo   --release       Perform actions for the release build type (default).
-    echo   --warnings      Show compiler warnings in the build summary.
-    echo   -h, --help      Show this help message.
-    echo.
-    echo Examples:
-    echo   %~nx0 build                # Build release (default)
-    echo   %~nx0 build --debug        # Build debug
-    echo   %~nx0 run                  # Build (if needed) and run release
-    echo   %~nx0 clean build --debug  # Clean debug, then build debug
-    echo   %~nx0 run -- --some-game-flag # Run release, passing flag to game
-    echo   %~nx0 setup                # Generate IDE config files (Windows)
-    echo   %~nx0 healthcheck          # Run health check (debug)
+:: Handle all commands
+IF /I "%~1"=="clean" SET "DO_CLEAN=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="build" SET "DO_BUILD=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="rebuild" SET "DO_CLEAN=1" & SET "DO_BUILD=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="run" SET "DO_RUN=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="healthcheck" SET "DO_HEALTHCHECK=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="configure" SET "DO_CONFIGURE=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="setup" SET "DO_SETUP=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="scripts" SET "DO_SCRIPTS=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="update" SET "DO_UPDATE=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="debug" SET "BUILD_TYPE=debug" & SHIFT & GOTO parse_args
+IF /I "%~1"=="--debug" SET "BUILD_TYPE=debug" & SHIFT & GOTO parse_args
+IF /I "%~1"=="release" SET "BUILD_TYPE=release" & SHIFT & GOTO parse_args
+IF /I "%~1"=="--release" SET "BUILD_TYPE=release" & SHIFT & GOTO parse_args
+IF /I "%~1"=="warnings" SET "SHOW_WARNINGS=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="--warnings" SET "SHOW_WARNINGS=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="--fix-requires" SET "FIX_REQUIRES=1" & SHIFT & GOTO parse_args
+IF /I "%~1"=="--" SET "PASS_THROUGH=1" & SHIFT & GOTO parse_args
+
+:: Unknown argument
+IF "%DEBUG%"=="1" echo [DEBUG] Ignoring unknown argument: "%~1"
+echo [WARNING] Ignoring unknown argument: "%~1" 1>&2
+SHIFT
+GOTO parse_args
+
+:execute_actions
+IF "%DEBUG%"=="1" (
+    echo [DEBUG] Actions to execute:
+    echo   DO_UPDATE=!DO_UPDATE!
+    echo   DO_BUILD=!DO_BUILD!
+    echo   DO_RUN=!DO_RUN!
+    echo   DO_HEALTHCHECK=!DO_HEALTHCHECK!
+)
+
+:: Update action (exclusive)
+IF "!DO_UPDATE!"=="1" (
+    IF "%DEBUG%"=="1" echo [DEBUG] Executing update action
+    
+    IF NOT EXIST "!GO_APP_DIR!\" (
+        echo [ERROR] Go app directory not found
+        exit /b 1
+    )
+    
+    pushd "!GO_APP_DIR!"
+    call go mod tidy
+    call go build -o "!GO_APP_NAME!" .
+    popd
+    
+    echo [SUCCESS] Update completed
     exit /b 0
-
-:ArgsDone
-
-REM --- Report Effective Settings --- START
-IF "%COMMAND_GIVEN%"=="true" (
-    echo --- Effective Settings ---
-    echo   Build Type:    %BUILD_TYPE%
-    echo   Show Warnings: %SHOW_WARNINGS%
-    IF "%DO_CLEAN%"=="true" echo   Clean Target:  true
-    IF "%DO_CONFIGURE%"=="true" echo   Configure:     true
-    echo --------------------------
 )
-REM --- Report Effective Settings --- END
 
-REM --- Execute Tasks ---
+:: Check Go exists if any action is requested
+SET "HAS_COMMAND=0"
+IF "!DO_CLEAN!"=="1" SET "HAS_COMMAND=1"
+IF "!DO_BUILD!"=="1" SET "HAS_COMMAND=1"
+IF "!DO_RUN!"=="1" SET "HAS_COMMAND=1"
+IF "!DO_HEALTHCHECK!"=="1" SET "HAS_COMMAND=1"
+IF "!DO_CONFIGURE!"=="1" SET "HAS_COMMAND=1"
+IF "!DO_SETUP!"=="1" SET "HAS_COMMAND=1"
+IF "!DO_SCRIPTS!"=="1" SET "HAS_COMMAND=1"
 
-REM Setup IDE
-IF "%DO_SETUP_IDE%"=="true" (
-    call :print_header "IDE Setup (Windows)"
-    SET "SETUP_SCRIPT=%SCRIPTS_DIR%\setup_ide.bat"
-    IF EXIST "%SETUP_SCRIPT%" (
-        echo --^> Running IDE setup script...
-        call "%SETUP_SCRIPT%"
-        IF !ERRORLEVEL! NEQ 0 (
-            call :print_error "IDE setup script failed with exit code !ERRORLEVEL!."
-            exit /b 1
-        )
-        call :print_footer
-    ) ELSE (
-        call :print_error "Setup script not found: %SETUP_SCRIPT%"
+IF "!HAS_COMMAND!"=="1" (
+    WHERE go >NUL 2>NUL
+    IF ERRORLEVEL 1 (
+        echo [ERROR] Go command not found in PATH
         exit /b 1
     )
-)
-
-REM Fix Lua Requires
-IF "%DO_FIX_REQUIRES%"=="true" (
-    call :print_header "Fix Lua Requires (Windows)"
-    SET "FIX_SCRIPT=%SCRIPTS_DIR%\check_lua_requires.bat"
-    IF EXIST "%FIX_SCRIPT%" (
-        echo --^> Running Lua require check script (Windows)...
-        call "%FIX_SCRIPT%"
-        IF !ERRORLEVEL! NEQ 0 (
-            call :print_error "Lua require check script failed or not implemented."
-            REM Do not exit, just warn
-        )
-        call :print_footer
-    ) ELSE (
-        call :print_error "Lua require check script not found or not implemented: %FIX_SCRIPT%"
-        REM Do not exit, just warn
+    
+    IF NOT EXIST "!GO_APP_DIR!\" (
+        echo [INFO] Performing initial build
+        pushd "!GO_APP_DIR!"
+        call go mod tidy
+        call go build -o "!GO_APP_NAME!" .
+        popd
     )
 )
 
-REM Build Dependencies
-SET "BUILD_EXTRA="
-IF "%DO_CLEAN%"=="true" SET "BUILD_EXTRA=%BUILD_EXTRA% --clean"
-IF "%DO_CONFIGURE%"=="true" SET "BUILD_EXTRA=%BUILD_EXTRA% --configure"
-IF "%SHOW_WARNINGS%"=="true" SET "BUILD_EXTRA=%BUILD_EXTRA% --warnings"
-IF /I "%BUILD_TYPE%"=="debug" SET "BUILD_ARGS=--debug %BUILD_EXTRA%"
-IF /I "%BUILD_TYPE%"=="release" SET "BUILD_ARGS=%BUILD_EXTRA%"
+:: Prepare base arguments
+SET "U7GO_ARGS=--buildtype=!BUILD_TYPE!"
+IF "!SHOW_WARNINGS!"=="1" SET "U7GO_ARGS=!U7GO_ARGS! --warnings"
 
-REM Build
-SET "BUILD_NEEDED=false"
-IF "%DO_BUILD%"=="true" SET "BUILD_NEEDED=true"
-IF "%DO_RUN%"=="true" SET "BUILD_NEEDED=true"
-IF "%DO_HEALTHCHECK%"=="true" SET "BUILD_NEEDED=true"
+:: Execute actions
+SET "LAST_EXIT_CODE=0"
 
-SET "BUILD_SCRIPT=%SCRIPTS_DIR%\build.bat"
-
-REM Logic to prevent build if only setup/scripts was called
-SET "SKIP_BUILD=false"
-IF "%COMMAND_GIVEN%"=="true" (
-    SET ONLY_NON_BUILD_COMMAND=true
-    IF "%DO_BUILD%"=="true" SET ONLY_NON_BUILD_COMMAND=false
-    IF "%DO_RUN%"=="true" SET ONLY_NON_BUILD_COMMAND=false
-    IF "%DO_HEALTHCHECK%"=="true" SET ONLY_NON_BUILD_COMMAND=false
-    IF "%DO_CLEAN%"=="true" SET ONLY_NON_BUILD_COMMAND=false
-    IF "%DO_CONFIGURE%"=="true" SET ONLY_NON_BUILD_COMMAND=false
-    IF "%DO_SETUP_IDE%"=="false" IF "%DO_FIX_REQUIRES%"=="false" SET ONLY_NON_BUILD_COMMAND=false
-
-    IF "%ONLY_NON_BUILD_COMMAND%"=="true" SET "SKIP_BUILD=true"
-)
-
-IF "%BUILD_NEEDED%"=="true" IF "%SKIP_BUILD%"=="false" (
-    call :print_header "Build (%BUILD_TYPE%)"
-    IF EXIST "%BUILD_SCRIPT%" (
-        echo --^> Running build script: %BUILD_SCRIPT% %BUILD_ARGS%
-         call "%BUILD_SCRIPT%" %BUILD_ARGS%
-         IF !ERRORLEVEL! NEQ 0 (
-             call :print_error "Build script failed with exit code !ERRORLEVEL!."
-             exit /b 1
-         )
-        call :print_footer
-    ) ELSE (
-        call :print_error "Build script not found: %BUILD_SCRIPT%"
-        exit /b 1
+:: Setup action
+IF "!DO_SETUP!"=="1" (
+    echo [INFO] Running setup
+    call "!GO_BINARY_EXE_PATH!" setup !U7GO_ARGS!
+    SET "LAST_EXIT_CODE=!ERRORLEVEL!"
+    IF !LAST_EXIT_CODE! NEQ 0 (
+        echo [ERROR] Setup failed
+        exit /b !LAST_EXIT_CODE!
     )
 )
 
-REM Run / Healthcheck
-IF "%DO_RUN%"=="true" OR "%DO_HEALTHCHECK%"=="true" (
-    SET "RUN_HEADER="
-    SET "RUN_FLAGS="
-    IF "%DO_HEALTHCHECK%"=="true" (
-        SET "RUN_HEADER=Health Check"
-        SET "RUN_FLAGS=--healthcheck"
-    ) ELSE (
-        SET "RUN_HEADER=Run (%BUILD_TYPE%)"
-        IF /I "%BUILD_TYPE%"=="debug" SET "RUN_FLAGS=%RUN_FLAGS% --debug"
-        REM Add collected game args
-        SET "RUN_FLAGS=%RUN_FLAGS% %RUN_EXTRA_ARGS%"
-    )
-    call :print_header "%RUN_HEADER%"
-    SET "RUN_SCRIPT=%SCRIPTS_DIR%\run_u7.bat"
-
-    IF EXIST "%RUN_SCRIPT%" (
-         echo --^> Running execution script: %RUN_SCRIPT% %RUN_FLAGS%
-         call "%RUN_SCRIPT%" %RUN_FLAGS%
-         SET RUN_EXIT_CODE=!ERRORLEVEL!
-         IF !RUN_EXIT_CODE! NEQ 0 (
-             echo [U7 INFO] Process exited with code !RUN_EXIT_CODE!.
-         )
-         call :print_footer
-    ) ELSE (
-         call :print_error "Run script not found: %RUN_SCRIPT%"
-         exit /b 1
+:: Scripts action
+IF "!DO_SCRIPTS!"=="1" (
+    echo [INFO] Running scripts
+    SET "SCRIPT_FLAGS="
+    IF "!FIX_REQUIRES!"=="1" SET "SCRIPT_FLAGS=--fix-requires"
+    call "!GO_BINARY_EXE_PATH!" scripts !SCRIPT_FLAGS! !U7GO_ARGS!
+    SET "LAST_EXIT_CODE=!ERRORLEVEL!"
+    IF !LAST_EXIT_CODE! NEQ 0 (
+        echo [ERROR] Scripts failed
+        exit /b !LAST_EXIT_CODE!
     )
 )
 
-REM If no command was given, show help implicitly.
-IF "%COMMAND_GIVEN%"=="false" (
-    call :Help
-    exit /b 1
+:: Configure action
+IF "!DO_CONFIGURE!"=="1" (
+    echo [INFO] Running configure
+    call "!GO_BINARY_EXE_PATH!" configure !U7GO_ARGS!
+    SET "LAST_EXIT_CODE=!ERRORLEVEL!"
+    IF !LAST_EXIT_CODE! NEQ 0 (
+        echo [ERROR] Configure failed
+        exit /b !LAST_EXIT_CODE!
+    )
 )
 
-endlocal
-exit /b 0 
+:: Clean action
+IF "!DO_CLEAN!"=="1" (
+    echo [INFO] Running clean
+    call "!GO_BINARY_EXE_PATH!" clean !U7GO_ARGS!
+    SET "LAST_EXIT_CODE=!ERRORLEVEL!"
+    IF !LAST_EXIT_CODE! NEQ 0 (
+        echo [ERROR] Clean failed
+        exit /b !LAST_EXIT_CODE!
+    )
+)
+
+:: Build action
+IF "!DO_BUILD!"=="1" (
+    echo [INFO] Running build
+    call "!GO_BINARY_EXE_PATH!" build !U7GO_ARGS!
+    SET "LAST_EXIT_CODE=!ERRORLEVEL!"
+    IF !LAST_EXIT_CODE! NEQ 0 (
+        echo [ERROR] Build failed
+        exit /b !LAST_EXIT_CODE!
+    )
+)
+
+:: Run/Healthcheck actions
+IF "!DO_RUN!"=="1" (
+    echo [INFO] Running game
+    SET "RUN_CMD="!GO_BINARY_EXE_PATH!" run !U7GO_ARGS!"
+    IF DEFINED GAME_ARGS_STR SET "RUN_CMD=!RUN_CMD! -- !GAME_ARGS_STR!"
+    call !RUN_CMD!
+    SET "LAST_EXIT_CODE=!ERRORLEVEL!"
+) ELSE IF "!DO_HEALTHCHECK!"=="1" (
+    echo [INFO] Running healthcheck
+    call "!GO_BINARY_EXE_PATH!" healthcheck
+    SET "LAST_EXIT_CODE=!ERRORLEVEL!"
+)
+
+:: Default action if no commands specified
+IF "!HAS_COMMAND!"=="0" (
+    echo [INFO] No command specified, running with default args
+    call "!GO_BINARY_EXE_PATH!" !U7GO_ARGS! %*
+    SET "LAST_EXIT_CODE=!ERRORLEVEL!"
+)
+
+exit /b !LAST_EXIT_CODE!
