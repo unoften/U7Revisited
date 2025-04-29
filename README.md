@@ -26,7 +26,7 @@ Welcome to Ultima VII: Revisited, an attempt to write a replacement engine for U
 
 **Wrapper Script Status:**
 *   ✅ **Linux/macOS (`./u7`):** Fully functional.
-*   ⏳ **Windows (`.\\u7.bat`):** Partially functional, build/run may exit unexpectedly. Tracked in [unoften/U7Revisited#11](https://github.com/unoften/U7Revisited/issues/11).
+*   ⏳ **Windows (`.\u7.bat`):** Partially functional, build/run may exit unexpectedly. Tracked in [unoften/U7Revisited#11](https://github.com/unoften/U7Revisited/issues/11).
 
 The easiest way to manage common development tasks (build, run, clean, IDE setup) is using the unified wrapper script `u7` (Linux/macOS) or `u7.bat` (Windows) located in the project root.
 
@@ -40,11 +40,11 @@ The easiest way to manage common development tasks (build, run, clean, IDE setup
     *   **Important CLion Note:** After running the setup, you still need to manually set the 'Working Directory' in the generated `U7_Debug*` and `U7_Release*` configurations to `${PROJECT_DIR}/Redist`.
 
 2.  **Building:**
-    *   Build Release (Default): `./u7 build` or `.\\u7.bat build`
-    *   Build Debug: `./u7 build --debug` or `.\\u7.bat build --debug`
-    *   Clean & Build Release: `./u7 clean build` or `.\\u7.bat clean build`
-    *   Clean & Build Debug: `./u7 clean build --debug` or `.\\u7.bat clean build --debug`
-    *   Build Release & Show Warnings: `./u7 build --warnings` or `.\\u7.bat build --warnings`
+    *   Build Release (Default): `./u7 build` or `.\u7.bat build`
+    *   Build Debug: `./u7 build --debug` or `.\u7.bat build --debug`
+    *   Clean & Build Release: `./u7 clean build` or `.\u7.bat clean build`
+    *   Clean & Build Debug: `./u7 clean build --debug` or `.\u7.bat clean build --debug`
+    *   Build Release & Show Warnings: `./u7 build --warnings` or `.\u7.bat build --warnings`
     *   **Build Output:** The build command shows a progress spinner. After completion, it prints a summary of errors (default) or errors and warnings (`--warnings`). It always reports the total counts and final build status.
 
 3.  **Running:**
