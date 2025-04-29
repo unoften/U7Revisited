@@ -1,5 +1,6 @@
 # Ultima VII: Revisited
 
+*Note: This is the **unoften** fork ([github.com/unoften/U7Revisited](https://github.com/unoften/U7Revisited)), used for developing features and improvements intended for the main project at [github.com/viridiangames/U7Revisited](https://github.com/viridiangames/U7Revisited).*
 
 Welcome to Ultima VII: Revisited, an attempt to write a replacement engine for Ultima VII: The Black Gate.
 
@@ -41,6 +42,19 @@ Welcome to Ultima VII: Revisited, an attempt to write a replacement engine for U
 The easiest way to manage common development tasks (build, run, clean, IDE setup) is using the unified wrapper script `u7` (Linux/macOS) or `u7.bat` (Windows) located in the project root.
 
 **Argument Flexibility:** Commands (`build`, `clean`, `setup`, `scripts`) and options (`debug`, `release`, `warnings`) can generally be specified in any order before the `run` command or the `--` separator for game arguments. Options can be provided with or without leading `--` (e.g., `debug` is the same as `--debug`). The script will print the effective settings before executing tasks.
+
+**Available Commands:**
+
+*   `update`:      (Wrapper Only) Rebuilds the underlying `u7go` executable from source and exits.
+*   `setup`:       Run initial project/IDE setup tasks.
+*   `configure`:   Force re-configuration of the Meson build directories.
+*   `build`:       Build the U7Revisited project (use `--debug` flag for debug build).
+*   `clean`:       Clean the build directory (use `--debug` flag for debug build).
+*   `run`:         Build (if necessary) and run the U7Revisited project (use `--debug` flag for debug build). Pass game arguments after `--`.
+*   `healthcheck`: Run the asset loading health check.
+*   `scripts`:     Run utility scripts (e.g., `--fix-requires`).
+*   `help`:        Show help information for `u7go` commands.
+*   `completion`:  Generate shell autocompletion scripts for `u7go`.
 
 1.  **Initial IDE Setup (One Time):**
     *   After cloning, run the IDE setup script:
