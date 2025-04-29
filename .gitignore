@@ -6,7 +6,7 @@
 
 # IDE-specific files (but keep ide-config)
 /.vs/
-/.vscode/
+**/\.vscode/
 /.idea/
 !/.idea_sample/
 /nbproject/
