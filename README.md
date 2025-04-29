@@ -21,6 +21,10 @@ Welcome to Ultima VII: Revisited, an attempt to write a replacement engine for U
 
 ## Recommended Workflow using the `u7` Script (unoften fork)
 
+**Wrapper Script Status:**
+*   ✅ **Linux/macOS (`./u7`):** Fully functional.
+*   ⏳ **Windows (`.\\u7.bat`):** Partially functional, build/run may exit unexpectedly. Tracked in [unoften/U7Revisited#11](https://github.com/unoften/U7Revisited/issues/11).
+
 The easiest way to manage common development tasks (build, run, clean, IDE setup) is using the unified wrapper script `u7` (Linux/macOS) or `u7.bat` (Windows) located in the project root.
 
 **Argument Flexibility:** Commands (`build`, `clean`, `setup`, `scripts`) and options (`debug`, `release`, `warnings`) can generally be specified in any order before the `run` command or the `--` separator for game arguments. Options can be provided with or without leading `--` (e.g., `debug` is the same as `--debug`). The script will print the effective settings before executing tasks.
