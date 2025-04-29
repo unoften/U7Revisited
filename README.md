@@ -21,7 +21,21 @@ Welcome to Ultima VII: Revisited, an attempt to write a replacement engine for U
 
 ## Recommended Workflow using the `u7` Script (unoften fork)
 
-**Wrapper Script Status:**
+### **WORK IN PROGRESS: Transition to Go-Based Wrapper**
+
+**Please Note:** The project is transitioning to a new, cross-platform build and task management system implemented in Go (`u7go/`). The familiar `u7` (Linux/macOS) and `u7.bat` (Windows) scripts in the project root now act as **wrappers** for this new system.
+
+*   **Goal:** Replace the separate, older `scripts/*.sh` and `scripts/*.bat` files with a single, consistent Go program.
+*   **Current Status:** This system is under active development. While the basic build/run/clean commands should work via the wrappers, some features may be incomplete or behave differently than the old scripts.
+*   **Usage:** Continue using `u7` or `u7.bat` as before. These wrappers will automatically:
+    *   Check if Go is installed.
+    *   Build the underlying `u7go` executable if it's missing or if you run `u7 rebuild`.
+    *   Pass your commands (e.g., `build`, `run`, `clean`, `--debug`) to the `u7go` program.
+*   **Feedback:** Report any issues encountered with the *new* wrapper system in this repository.
+
+---
+
+**Legacy Wrapper Script Status:**
 *   ✅ **Linux/macOS (`./u7`):** Fully functional.
 *   ⏳ **Windows (`.\u7.bat`):** Partially functional, build/run may exit unexpectedly. Tracked in [unoften/U7Revisited#11](https://github.com/unoften/U7Revisited/issues/11).
 

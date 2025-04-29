@@ -1,324 +1,195 @@
 @echo off
-REM Main wrapper script for U7Revisited development tasks (Windows)
+echo [u7 Debug] Script Start.
 setlocal enabledelayedexpansion
+echo [u7 Debug] setlocal done.
 
 SET "SCRIPT_DIR=%~dp0"
 REM Ensure SCRIPT_DIR ends with a backslash
-IF "%SCRIPT_DIR:~-1%" NEQ "\" SET "SCRIPT_DIR=%SCRIPT_DIR%\"
-SET "SCRIPTS_SUBDIR=scripts"
-SET "SCRIPTS_DIR=%SCRIPT_DIR%%SCRIPTS_SUBDIR%"
+REM Breaking down the IF...SET for clarity
+SET NeedsSlash=0
+IF "%SCRIPT_DIR:~-1%" NEQ "\" SET NeedsSlash=1
+IF %NeedsSlash% EQU 1 SET "SCRIPT_DIR=%SCRIPT_DIR%\"
+SET "GO_APP_DIR=%SCRIPT_DIR%u7go"
+SET "GO_APP_NAME=u7go.exe"
+REM Path where the binary will be BUILT and EXECUTED (inside the go app dir)
+SET "GO_BINARY_EXE_PATH=%GO_APP_DIR%\%GO_APP_NAME%"
+echo [u7 Debug] Variables set. Before error handler definition.
 
-REM --- Colors (Basic - might not work everywhere) ---
-REM Using 'echo' with escapes is unreliable. Use 'powershell' for better color.
-REM Fallback: No color.
+REM --- Argument Parsing for Special Wrapper Commands ---
+SET DO_REBUILD=0
+IF /I "%~1" EQU "update" SET DO_REBUILD=1
 
-REM --- Helper Function (simulated) ---
-:print_header
-    echo.
-    echo ==================================================
-    echo   U7Revisited Task: %~1
-    echo ==================================================
-    GOTO :EOF
-
-:print_footer
-    echo ==================================================
-    echo   Task Finished
-    echo ==================================================
-    echo.
-    GOTO :EOF
-
-:print_error
-    echo [U7 ERROR] %~1 >&2
-    GOTO :EOF
-
-REM --- Check for scripts directory ---
-IF NOT EXIST "%SCRIPTS_DIR%\" (
-    call :print_error "Scripts directory '%SCRIPTS_DIR%' not found!"
-    exit /b 1
-)
-
-REM --- Default values ---
-SET "BUILD_TYPE=release"
-SET "BUILD_ARGS="
-SET "RUN_EXTRA_ARGS="
-SET "DO_BUILD=false"
-SET "DO_CLEAN=false"
-SET "DO_CONFIGURE=false"
-SET "DO_RUN=false"
-SET "DO_SETUP_IDE=false"
-SET "DO_HEALTHCHECK=false"
-SET "DO_FIX_REQUIRES=false"
-SET "SHOW_WARNINGS=false"
-SET "COMMAND_GIVEN=false"
-SET "RUN_ARGS_STARTED=false"
-
-REM --- Argument Parsing (Simplified - order matters more than Linux) ---
-:ArgLoop
-IF "%~1"=="" GOTO ArgsDone
-
-    IF "%RUN_ARGS_STARTED%"=="true" (
-        REM Collect remaining arguments for the game
-        SET RUN_EXTRA_ARGS=!RUN_EXTRA_ARGS! %1
-        SHIFT
-        GOTO ArgLoop
-    )
-
-    IF /I "%~1"=="build" (
-        SET "DO_BUILD=true"
-        SET "COMMAND_GIVEN=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="run" (
-        SET "DO_RUN=true"
-        SET "COMMAND_GIVEN=true"
-        SET "RUN_ARGS_STARTED=true" REM Start collecting game args
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="clean" (
-        SET "DO_CLEAN=true"
-        SET "COMMAND_GIVEN=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="configure" (
-        SET "DO_CONFIGURE=true"
-        SET "COMMAND_GIVEN=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="setup" (
-        SET "DO_SETUP_IDE=true"
-        SET "COMMAND_GIVEN=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="healthcheck" (
-        SET "DO_HEALTHCHECK=true"
-        SET "COMMAND_GIVEN=true"
-        SET "BUILD_TYPE=debug" REM Healthcheck implies debug
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="scripts" (
-        SET "COMMAND_GIVEN=true"
-        SHIFT
-        IF /I "%~1"=="--fix-requires" (
-            SET "DO_FIX_REQUIRES=true"
-        ) ELSE (
-            call :print_error "Unknown scripts command: %1. Available: --fix-requires"
-            exit /b 1
-        )
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="--debug" (
-        SET "BUILD_TYPE=debug"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="debug" (
-        SET "BUILD_TYPE=debug"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="--release" (
-        SET "BUILD_TYPE=release"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="release" (
-        SET "BUILD_TYPE=release"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="--warnings" (
-        SET "SHOW_WARNINGS=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="warnings" (
-        SET "SHOW_WARNINGS=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-    IF /I "%~1"=="-h" GOTO Help
-    IF /I "%~1"=="--help" GOTO Help
-
-    REM Handle -- separator for game args
-    IF "%~1"=="--" (
-        SET "RUN_ARGS_STARTED=true"
-        SHIFT
-        GOTO ArgLoop
-    )
-
-    call :print_error "Unknown command or option: %1"
-    exit /b 1
-    SHIFT
-    GOTO ArgLoop
-
-:Help
-    echo Usage: %~nx0 [command...] [options...] [-- game_args...]
-    echo.
-    echo Commands:
-    echo   build           Build the project (default: release).
-    echo   run             Run the project (builds first if needed, default: release).
-    echo   clean           Clean the build directory for the selected type.
-    echo   configure       Force configure before build.
-    echo   setup           Run the IDE setup script (Windows).
-    echo   healthcheck     Run the asset loading health check (implies --debug).
-    echo   scripts         Run utility scripts:
-    echo     --fix-requires  Check/fix Lua requires (NOT YET IMPLEMENTED for Windows).
-    echo.
-    echo Options:
-    echo   --debug         Perform actions for the debug build type.
-    echo   --release       Perform actions for the release build type (default).
-    echo   --warnings      Show compiler warnings in the build summary.
-    echo   -h, --help      Show this help message.
-    echo.
-    echo Examples:
-    echo   %~nx0 build                # Build release (default)
-    echo   %~nx0 build --debug        # Build debug
-    echo   %~nx0 run                  # Build (if needed) and run release
-    echo   %~nx0 clean build --debug  # Clean debug, then build debug
-    echo   %~nx0 run -- --some-game-flag # Run release, passing flag to game
-    echo   %~nx0 setup                # Generate IDE config files (Windows)
-    echo   %~nx0 healthcheck          # Run health check (debug)
-    exit /b 0
-
-:ArgsDone
-
-REM --- Report Effective Settings --- START
-IF "%COMMAND_GIVEN%"=="true" (
-    echo --- Effective Settings ---
-    echo   Build Type:    %BUILD_TYPE%
-    echo   Show Warnings: %SHOW_WARNINGS%
-    IF "%DO_CLEAN%"=="true" echo   Clean Target:  true
-    IF "%DO_CONFIGURE%"=="true" echo   Configure:     true
-    echo --------------------------
-)
-REM --- Report Effective Settings --- END
-
-REM --- Execute Tasks ---
-
-REM Setup IDE
-IF "%DO_SETUP_IDE%"=="true" (
-    call :print_header "IDE Setup (Windows)"
-    SET "SETUP_SCRIPT=%SCRIPTS_DIR%\setup_ide.bat"
-    IF EXIST "%SETUP_SCRIPT%" (
-        echo --^> Running IDE setup script...
-        call "%SETUP_SCRIPT%"
-        IF !ERRORLEVEL! NEQ 0 (
-            call :print_error "IDE setup script failed with exit code !ERRORLEVEL!."
-            exit /b 1
-        )
-        call :print_footer
-    ) ELSE (
-        call :print_error "Setup script not found: %SETUP_SCRIPT%"
+IF %DO_REBUILD% EQU 1 (
+    echo [u7 Wrapper] 'update' command detected: Rebuilding u7go...
+    IF NOT EXIST "%GO_APP_DIR%\" (
+        echo [u7 Wrapper ERROR] Cannot update u7go: Go application directory not found: %GO_APP_DIR% >&2
         exit /b 1
     )
-)
-
-REM Fix Lua Requires
-IF "%DO_FIX_REQUIRES%"=="true" (
-    call :print_header "Fix Lua Requires (Windows)"
-    SET "FIX_SCRIPT=%SCRIPTS_DIR%\check_lua_requires.bat"
-    IF EXIST "%FIX_SCRIPT%" (
-        echo --^> Running Lua require check script (Windows)...
-        call "%FIX_SCRIPT%"
-        IF !ERRORLEVEL! NEQ 0 (
-            call :print_error "Lua require check script failed or not implemented."
-            REM Do not exit, just warn
-        )
-        call :print_footer
-    ) ELSE (
-        call :print_error "Lua require check script not found or not implemented: %FIX_SCRIPT%"
-        REM Do not exit, just warn
-    )
-)
-
-REM Build Dependencies
-SET "BUILD_EXTRA="
-IF "%DO_CLEAN%"=="true" SET "BUILD_EXTRA=%BUILD_EXTRA% --clean"
-IF "%DO_CONFIGURE%"=="true" SET "BUILD_EXTRA=%BUILD_EXTRA% --configure"
-IF "%SHOW_WARNINGS%"=="true" SET "BUILD_EXTRA=%BUILD_EXTRA% --warnings"
-IF /I "%BUILD_TYPE%"=="debug" SET "BUILD_ARGS=--debug %BUILD_EXTRA%"
-IF /I "%BUILD_TYPE%"=="release" SET "BUILD_ARGS=%BUILD_EXTRA%"
-
-REM Build
-SET "BUILD_NEEDED=false"
-IF "%DO_BUILD%"=="true" SET "BUILD_NEEDED=true"
-IF "%DO_RUN%"=="true" SET "BUILD_NEEDED=true"
-IF "%DO_HEALTHCHECK%"=="true" SET "BUILD_NEEDED=true"
-
-SET "BUILD_SCRIPT=%SCRIPTS_DIR%\build.bat"
-
-REM Logic to prevent build if only setup/scripts was called
-SET "SKIP_BUILD=false"
-IF "%COMMAND_GIVEN%"=="true" (
-    SET ONLY_NON_BUILD_COMMAND=true
-    IF "%DO_BUILD%"=="true" SET ONLY_NON_BUILD_COMMAND=false
-    IF "%DO_RUN%"=="true" SET ONLY_NON_BUILD_COMMAND=false
-    IF "%DO_HEALTHCHECK%"=="true" SET ONLY_NON_BUILD_COMMAND=false
-    IF "%DO_CLEAN%"=="true" SET ONLY_NON_BUILD_COMMAND=false
-    IF "%DO_CONFIGURE%"=="true" SET ONLY_NON_BUILD_COMMAND=false
-    IF "%DO_SETUP_IDE%"=="false" IF "%DO_FIX_REQUIRES%"=="false" SET ONLY_NON_BUILD_COMMAND=false
-
-    IF "%ONLY_NON_BUILD_COMMAND%"=="true" SET "SKIP_BUILD=true"
-)
-
-IF "%BUILD_NEEDED%"=="true" IF "%SKIP_BUILD%"=="false" (
-    call :print_header "Build (%BUILD_TYPE%)"
-    IF EXIST "%BUILD_SCRIPT%" (
-        echo --^> Running build script: %BUILD_SCRIPT% %BUILD_ARGS%
-         call "%BUILD_SCRIPT%" %BUILD_ARGS%
-         IF !ERRORLEVEL! NEQ 0 (
-             call :print_error "Build script failed with exit code !ERRORLEVEL!."
-             exit /b 1
-         )
-        call :print_footer
-    ) ELSE (
-        call :print_error "Build script not found: %BUILD_SCRIPT%"
-        exit /b 1
-    )
-)
-
-REM Run / Healthcheck
-IF "%DO_RUN%"=="true" OR "%DO_HEALTHCHECK%"=="true" (
-    SET "RUN_HEADER="
-    SET "RUN_FLAGS="
-    IF "%DO_HEALTHCHECK%"=="true" (
-        SET "RUN_HEADER=Health Check"
-        SET "RUN_FLAGS=--healthcheck"
-    ) ELSE (
-        SET "RUN_HEADER=Run (%BUILD_TYPE%)"
-        IF /I "%BUILD_TYPE%"=="debug" SET "RUN_FLAGS=%RUN_FLAGS% --debug"
-        REM Add collected game args
-        SET "RUN_FLAGS=%RUN_FLAGS% %RUN_EXTRA_ARGS%"
-    )
-    call :print_header "%RUN_HEADER%"
-    SET "RUN_SCRIPT=%SCRIPTS_DIR%\run_u7.bat"
-
-    IF EXIST "%RUN_SCRIPT%" (
-         echo --^> Running execution script: %RUN_SCRIPT% %RUN_FLAGS%
-         call "%RUN_SCRIPT%" %RUN_FLAGS%
-         SET RUN_EXIT_CODE=!ERRORLEVEL!
-         IF !RUN_EXIT_CODE! NEQ 0 (
-             echo [U7 INFO] Process exited with code !RUN_EXIT_CODE!.
-         )
-         call :print_footer
-    ) ELSE (
-         call :print_error "Run script not found: %RUN_SCRIPT%"
+    
+    REM Verify Go exists before trying to build
+    where go > nul 2> nul
+    IF ERRORLEVEL 1 (
+         echo [u7 Wrapper ERROR] Cannot update u7go: 'go' command not found in PATH. >&2
          exit /b 1
     )
+    go version > nul 2> nul
+    IF ERRORLEVEL 1 (
+         echo [u7 Wrapper ERROR] Cannot update u7go: 'go version' failed. Check Go installation. >&2
+         exit /b 1
+    )
+
+    pushd "%GO_APP_DIR%"
+    IF ERRORLEVEL 1 (
+        echo [u7 Wrapper ERROR] u7go update failed: Could not change directory to %GO_APP_DIR%. >&2
+        exit /b 1
+    )
+    echo [u7 Wrapper] Running: go build -o %GO_APP_NAME% .
+    del /Q /F "%GO_APP_NAME%" > nul 2> nul
+    REM Run go mod tidy first
+    echo [u7 Wrapper] Running go mod tidy...
+    go mod tidy
+    IF ERRORLEVEL 1 (
+        echo [u7 Wrapper ERROR] 'go mod tidy' failed during update in %GO_APP_DIR%. >&2
+        popd
+        exit /b 1
+    )
+    REM Now build
+    go build -o "%GO_APP_NAME%" .
+    IF ERRORLEVEL 1 (
+        echo [u7 Wrapper ERROR] u7go update failed during 'go build' in %GO_APP_DIR%. >&2
+        popd
+        exit /b 1
+    )
+    echo [u7 Wrapper] u7go update successful: %GO_BINARY_EXE_PATH%
+    dir "%GO_BINARY_EXE_PATH%" | findstr /B /C:" " /C:"." 
+    popd
+    exit /b 0
 )
 
-REM If no command was given, show help implicitly.
-IF "%COMMAND_GIVEN%"=="false" (
-    call :Help
+REM ==============================================
+REM SCRIPT EXECUTION LOGIC ENDS HERE
+REM Any code below this point should only be reached via CALL or GOTO
+REM ==============================================
+
+REM --- Check Go Installation --- 
+echo [u7 Debug] Reached Go check section...
+REM 1. Check for Go command
+echo [u7 Debug] About to run 'where go'...
+where go > nul 2> nul
+echo [u7 Debug] Finished 'where go'. Checking ERRORLEVEL %ERRORLEVEL%...
+IF ERRORLEVEL 1 GOTO GoNotFound
+
+REM 1b. Verify Go command works
+echo [u7 Debug] About to run 'go version'...
+go version > nul 2> nul
+echo [u7 Debug] Finished 'go version'. Checking ERRORLEVEL %ERRORLEVEL%...
+IF ERRORLEVEL 1 GOTO GoCommandFailed
+
+REM --- Go seems OK, continue script ---
+echo [u7 Wrapper] Found functional Go command.
+GOTO ContinueScript
+
+:GoNotFound
+    echo [u7 Wrapper ERROR] 'go' command not found in PATH. >&2
+    echo. >&2
+    echo   Please install Go (version 1.18 or newer recommended) from: >&2
+    echo     https://golang.org/dl/ >&2
+    echo. >&2
+    echo   Ensure the Go installation directory (e.g., C:\Go\bin) is added to your system PATH environment variable. >&2
+    exit /b 1
+
+:GoCommandFailed
+    echo [u7 Wrapper ERROR] 'go' command was found, but 'go version' failed to execute. >&2
+    echo   This might indicate a corrupted Go installation or PATH issues. >&2
+    echo. >&2
+    echo   Please ensure Go is correctly installed and accessible. >&2
+    echo   Download: https://golang.org/dl/ >&2
+    exit /b 1
+
+:ContinueScript
+REM 2. Check if u7go directory exists
+IF NOT EXIST "%GO_APP_DIR%\" (
+    echo [u7 Wrapper ERROR] Go application source directory not found: %GO_APP_DIR% >&2
     exit /b 1
 )
 
-endlocal
-exit /b 0 
+REM 3. Check if u7go.exe binary exists inside u7go/, build if not
+IF NOT EXIST "%GO_BINARY_EXE_PATH%" (
+    echo [u7 Wrapper] Go application binary '%GO_APP_NAME%' not found. Building...
+    
+    REM Store current dir and cd, then restore
+    pushd "%GO_APP_DIR%"
+    IF ERRORLEVEL 1 (
+        call :HandleWrapperError "Failed to change directory to %GO_APP_DIR%."
+    )
+
+    REM Run go mod tidy first
+    echo [u7 Wrapper] Running go mod tidy...
+    go mod tidy
+    IF ERRORLEVEL 1 (
+        popd
+        call :HandleWrapperError "'go mod tidy' failed in %GO_APP_DIR%."
+    )
+    
+    REM Build the application inside the current directory (u7go)
+    echo [u7 Wrapper] Running go build... (Output: %GO_APP_NAME%)
+    REM Clear any old local binary first
+    del /Q /F "%GO_APP_NAME%" > nul 2> nul 
+    go build -o "%GO_APP_NAME%" .
+    IF ERRORLEVEL 1 (
+        popd
+        call :HandleWrapperError "'go build' failed to create %GO_APP_NAME% in %GO_APP_DIR%."
+    )
+    
+    REM Check if build succeeded and created the file
+    IF NOT EXIST "%GO_BINARY_EXE_PATH%" (
+        popd
+        call :HandleWrapperError "Target binary check failed after build. %GO_BINARY_EXE_PATH% not found."
+    )
+    echo [u7 Wrapper] Go application built successfully.
+    popd
+)
+
+REM 4. Execute the Go application from its location inside u7go/, passing all arguments
+REM %* passes all arguments as they were received by this script
+echo [u7 Wrapper] Preparing to execute: %GO_BINARY_EXE_PATH% %*
+echo [u7 Wrapper] --- Executing Go application ---
+echo.
+
+REM Execute and branch based on success (ERRORLEVEL 0) or failure (ERRORLEVEL non-zero)
+"%GO_BINARY_EXE_PATH%" %* && (
+    REM Success Path
+    REM Don't echo success here, let Go app handle its output
+    endlocal
+    exit /b 0
+) || (
+    REM Failure Path
+    REM Capture the non-zero exit code immediately
+    SET U7GO_EXIT_CODE=%ERRORLEVEL%
+    echo [u7 Wrapper ERROR] Go application exited with error code: %U7GO_EXIT_CODE%. >&2
+    endlocal
+    exit /b %U7GO_EXIT_CODE%
+)
+
+REM ==============================================
+REM SCRIPT EXECUTION LOGIC ENDS HERE
+REM Any code below this point should only be reached via CALL or GOTO
+REM ==============================================
+
+REM --- Subroutines ---
+
+REM Simple Error Print Subroutine
+:HandleWrapperError
+    REM echo [u7 Wrapper ERROR] Inside HandleWrapperError subroutine... >&2
+    echo [u7 Wrapper ERROR] Raw argument received: %1 >&2
+    echo [u7 Wrapper ERROR] Argument after ~ processing: %~1 >&2
+    REM Use EQU for safer string comparison
+    IF "%~1" EQU "" (
+      echo [u7 Wrapper ERROR] MESSAGE WAS BLANK OR MISSING! Check calling line. >&2
+    ) ELSE (
+      echo [u7 Wrapper ERROR] Message: %~1 >&2
+    )
+    exit /b 1
+REM --- End of error handler ---
+
+REM --- End of File --- 

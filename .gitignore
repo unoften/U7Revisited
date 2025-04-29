@@ -3,6 +3,8 @@
 /buildDir/
 /x64/
 /U7Revisited/x64/
+build-debug/
+build-release/
 
 # IDE-specific files (but keep ide-config)
 /.vs/
@@ -28,6 +30,7 @@
 *.so
 *.dll
 *.exe
+u7go/u7go
 
 # Other build artifacts
 cmake-build-debug/
@@ -45,3 +48,7 @@ Makefile
 # Notebook files
 *.ipynb
 *.vscode-notebook
+
+# OS-specific files
+.DS_Store
+Thumbs.db
